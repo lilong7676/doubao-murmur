@@ -17,7 +17,7 @@ import os
 import subprocess
 import time
 
-from doubao_murmur.config import PASTE_DELAY
+from doubao_murmur.config import PASTE_DELAY, PASTE_FOCUS_DELAY, PASTE_KEY_DELAY_MS
 from doubao_murmur.host_tools import command_candidates
 from doubao_murmur.paste.hyprland_window import (
     active_window_class as hyprland_active_window_class,
@@ -178,6 +178,10 @@ class PasteHelper:
         PasteHelper._restore_focused_window()
         letter, use_shift = PasteHelper._paste_chord()
 
+        # Give slow-to-focus applications (notably Electron) a beat to route
+        # input focus to the editor widget before the synthetic chord lands.
+        time.sleep(PASTE_FOCUS_DELAY)
+
         # On a pure X11 session, xdotool resolves the logical Control_L
         # keysym through the active XKB map. This matters when users swap
         # CapsLock and Ctrl (ctrl:swapcaps): the Linux keycode 29 used by
@@ -250,12 +254,17 @@ class PasteHelper:
 
     @staticmethod
     def _simulate_paste_with_xdotool(letter: str, use_shift: bool) -> bool:
-        """Try to send the paste shortcut through the active X11 keymap."""
+        """Try to send the paste shortcut through the active X11 keymap.
+
+        The chord is sent with an explicit inter-key delay: Electron/Chromium
+        applications can drop an XTEST chord whose Ctrl and letter arrive in
+        the same instant, so a short pause lets them register the modifier.
+        """
         xdotool_key = "ctrl+shift+" + letter if use_shift else "ctrl+" + letter
         for command in command_candidates("xdotool"):
             try:
                 subprocess.run(
-                    command + ["key", xdotool_key],
+                    command + ["key", "--delay", str(PASTE_KEY_DELAY_MS), xdotool_key],
                     check=True,
                     timeout=3,
                 )
@@ -276,6 +285,15 @@ class PasteHelper:
                 subprocess.run(
                     command + ["windowactivate", "--sync", window_id],
                     check=True,
+                    timeout=3,
+                )
+                # windowactivate raises and focuses the frame, but Electron
+                # apps can leave input focus on the overlay; an explicit focus
+                # call targets the editor widget. Best-effort: some windows
+                # reject windowfocus, which must not abort the paste.
+                subprocess.run(
+                    command + ["windowfocus", "--sync", window_id],
+                    check=False,
                     timeout=3,
                 )
                 logger.info("Restored X11 paste target: %s", window_id)

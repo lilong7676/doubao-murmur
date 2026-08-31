@@ -92,7 +92,7 @@ class TestSimulatePaste:
              patch.object(PasteHelper, "_paste_chord",
                           return_value=("v", True)), \
              patch("subprocess.run", side_effect=[remembered, MagicMock(),
-                                                   MagicMock()]) as mock_run:
+                                                   MagicMock(), MagicMock()]) as mock_run:
             PasteHelper.remember_focused_window()
             PasteHelper._simulate_paste()
 
@@ -101,7 +101,10 @@ class TestSimulatePaste:
                 "xdotool", "windowactivate", "--sync", "4242"
             ]
             assert mock_run.call_args_list[2].args[0] == [
-                "xdotool", "key", "ctrl+shift+v"
+                "xdotool", "windowfocus", "--sync", "4242"
+            ]
+            assert mock_run.call_args_list[3].args[0] == [
+                "xdotool", "key", "--delay", "50", "ctrl+shift+v"
             ]
 
     def test_x11_prefers_xdotool_for_remapped_modifier(self):
@@ -118,7 +121,7 @@ class TestSimulatePaste:
 
             mock_xdotool.assert_called_once_with("v", False)
             mock_run.assert_called_once_with(
-                ["xdotool", "key", "ctrl+v"],
+                ["xdotool", "key", "--delay", "50", "ctrl+v"],
                 check=True,
                 timeout=3,
             )
@@ -174,7 +177,7 @@ class TestSimulatePaste:
             PasteHelper._simulate_paste()
             mock_run.assert_called_once()
             args = mock_run.call_args
-            assert args[0][0] == ["xdotool", "key", "ctrl+v"]
+            assert args[0][0] == ["xdotool", "key", "--delay", "50", "ctrl+v"]
 
     def test_xdotool_terminal_uses_ctrl_shift_v(self):
         def which_side_effect(cmd):
@@ -190,7 +193,7 @@ class TestSimulatePaste:
             mock_run.assert_called_once()
             args = mock_run.call_args
             assert args[0][0] == [
-                "xdotool", "key", "ctrl+shift+v"
+                "xdotool", "key", "--delay", "50", "ctrl+shift+v"
             ]
 
     def test_flatpak_spawn_host_fallback(self):
