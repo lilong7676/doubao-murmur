@@ -19,6 +19,7 @@ from doubao_murmur.hotkey.x11_listener import X11KeyListener
 from doubao_murmur.keyboard.keyboard_window import KeyboardWindow
 from doubao_murmur.params_store import ParamsStore
 from doubao_murmur.paste.paste_helper import PasteHelper
+from doubao_murmur.session import is_pure_x11_session
 from doubao_murmur.transcription import TranscriptionManager
 from doubao_murmur.ui.login_window import LoginWindow
 from doubao_murmur.ui.overlay import Overlay
@@ -91,7 +92,11 @@ class DoubaoMurmurApp(Gtk.Application):
         # Prefer the X11 listener: it sees both physical keys and
         # XTEST-injected ones (Steam Input desktop layouts inject
         # controller-mapped keys via XTEST, invisible to evdev).
-        # evdev runs as a fallback in case X11 listener fails to start.
+        # evdev runs as the Wayland backend and as a fallback when XRecord
+        # cannot start. On a pure X11 session with XRecord active it is
+        # skipped: it would re-read the same keys and, by opening every
+        # /dev/input/event* device, risk a 100%-CPU busy-wait on a
+        # continuously-emitting device (mouse/touchpad/gamepad/audio jack).
         x11 = None
         evdev = None
         if X11KeyListener.is_available():
@@ -100,7 +105,9 @@ class DoubaoMurmurApp(Gtk.Application):
                 on_escape=self.hotkey_manager.trigger_cancel,
                 on_keyboard=self.hotkey_manager.trigger_keyboard,
             )
-        if EvdevListener.is_available():
+        if (
+            x11 is None or not is_pure_x11_session()
+        ) and EvdevListener.is_available():
             evdev = EvdevListener(
                 on_toggle=self.hotkey_manager.trigger_toggle,
                 on_escape=self.hotkey_manager.trigger_cancel,
