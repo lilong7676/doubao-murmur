@@ -60,6 +60,40 @@ _TERMINAL_WM_CLASSES = {
 class PasteHelper:
     """Copy text to clipboard and simulate paste keystroke."""
 
+    _x11_target_window: str | None = None
+
+    @staticmethod
+    def remember_focused_window() -> None:
+        """Remember the X11 window that should receive the next paste.
+
+        The recording overlay is mapped after this call. Some window managers
+        (notably XFCE) may focus that GTK window despite its no-focus hints, so
+        relying on whichever window is active at completion can paste back into
+        Doubao Murmur itself.
+        """
+        PasteHelper._x11_target_window = None
+        if not PasteHelper._is_pure_x11_session():
+            return
+        for command in command_candidates("xdotool"):
+            try:
+                result = subprocess.run(
+                    command + ["getactivewindow"],
+                    capture_output=True,
+                    check=True,
+                    timeout=3,
+                )
+                window_id = result.stdout.decode().strip()
+                if window_id.isdigit():
+                    PasteHelper._x11_target_window = window_id
+                    logger.info("Remembered X11 paste target: %s", window_id)
+                    return
+            except Exception as e:
+                logger.warning("Could not remember X11 paste target: %s", e)
+
+    @staticmethod
+    def forget_focused_window() -> None:
+        PasteHelper._x11_target_window = None
+
     @staticmethod
     def copy_and_paste(text: str) -> None:
         if not text:
@@ -77,19 +111,21 @@ class PasteHelper:
     @staticmethod
     def _copy_to_clipboard(text: str) -> None:
         """Copy text to system clipboard."""
-        # Try Wayland first
-        for command in command_candidates("wl-copy"):
-            try:
-                subprocess.run(
-                    command,
-                    input=text.encode(),
-                    check=True,
-                    timeout=3,
-                )
-                logger.info("Copied to clipboard via wl-copy")
-                return
-            except Exception as e:
-                logger.warning("wl-copy failed: %s", e)
+        # Try Wayland first, except in a known pure-X11 session where wl-copy
+        # can only emit connection errors and delay the real xclip path.
+        if not PasteHelper._is_pure_x11_session():
+            for command in command_candidates("wl-copy"):
+                try:
+                    subprocess.run(
+                        command,
+                        input=text.encode(),
+                        check=True,
+                        timeout=3,
+                    )
+                    logger.info("Copied to clipboard via wl-copy")
+                    return
+                except Exception as e:
+                    logger.warning("wl-copy failed: %s", e)
 
         # Try X11
         for command in command_candidates("xclip"):
@@ -137,6 +173,7 @@ class PasteHelper:
 
         Terminals use Ctrl+Shift+V; everything else uses Ctrl+V.
         """
+        PasteHelper._restore_focused_window()
         use_shift = PasteHelper._focused_window_is_terminal()
 
         # On a pure X11 session, xdotool resolves the logical Control_L
@@ -220,6 +257,25 @@ class PasteHelper:
                 return True
             except Exception as e:
                 logger.warning("xdotool failed: %s", e)
+        return False
+
+    @staticmethod
+    def _restore_focused_window() -> bool:
+        """Reactivate the X11 window captured before the overlay appeared."""
+        window_id = PasteHelper._x11_target_window
+        if not window_id or not PasteHelper._is_pure_x11_session():
+            return False
+        for command in command_candidates("xdotool"):
+            try:
+                subprocess.run(
+                    command + ["windowactivate", "--sync", window_id],
+                    check=True,
+                    timeout=3,
+                )
+                logger.info("Restored X11 paste target: %s", window_id)
+                return True
+            except Exception as e:
+                logger.warning("Could not restore X11 paste target: %s", e)
         return False
 
     @staticmethod

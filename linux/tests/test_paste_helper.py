@@ -48,6 +48,21 @@ class TestCopyToClipboard:
             args = mock_run.call_args
             assert args[0][0] == ["xclip", "-selection", "clipboard"]
 
+    def test_x11_skips_wl_copy(self):
+        def which_side_effect(cmd):
+            if cmd in {"wl-copy", "xclip"}:
+                return f"/usr/bin/{cmd}"
+            return None
+
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
+             patch("shutil.which", side_effect=which_side_effect), \
+             patch("subprocess.run") as mock_run:
+            PasteHelper._copy_to_clipboard("hello")
+            mock_run.assert_called_once()
+            assert mock_run.call_args[0][0] == [
+                "xclip", "-selection", "clipboard"
+            ]
+
     def test_empty_text_ignored(self):
         with patch("subprocess.run") as mock_run:
             PasteHelper.copy_and_paste("")
@@ -59,8 +74,30 @@ class TestSimulatePaste:
     def wayland_session(self, monkeypatch):
         # Keep the existing backend-priority tests deterministic. The X11
         # regression below explicitly switches this to a pure X11 session.
+        PasteHelper.forget_focused_window()
         monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
         monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        yield
+        PasteHelper.forget_focused_window()
+
+    def test_remembers_and_restores_x11_target_before_paste(self):
+        remembered = MagicMock(stdout=b"4242\n")
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
+             patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch.object(PasteHelper, "_focused_window_is_terminal",
+                          return_value=True), \
+             patch("subprocess.run", side_effect=[remembered, MagicMock(),
+                                                   MagicMock()]) as mock_run:
+            PasteHelper.remember_focused_window()
+            PasteHelper._simulate_paste()
+
+            assert PasteHelper._x11_target_window == "4242"
+            assert mock_run.call_args_list[1].args[0] == [
+                "xdotool", "windowactivate", "--sync", "4242"
+            ]
+            assert mock_run.call_args_list[2].args[0] == [
+                "xdotool", "key", "ctrl+shift+v"
+            ]
 
     def test_x11_prefers_xdotool_for_remapped_modifier(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
