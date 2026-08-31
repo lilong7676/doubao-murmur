@@ -4,14 +4,16 @@ Mirrors PasteHelper.swift.
 
 Methods (in priority order):
 1. wl-copy (Wayland clipboard) + uinput (kernel-level paste simulation)
-2. ydotool/wtype (paste simulation)
-3. xclip/xsel (X11 clipboard) + xdotool (X11 paste simulation)
-4. GTK clipboard API as last resort
+2. On a pure X11 session, xdotool (X11 paste simulation)
+3. ydotool/wtype (paste simulation)
+4. xclip/xsel (X11 clipboard) + the remaining paste backends
+5. GTK clipboard API as last resort
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 
@@ -137,6 +139,16 @@ class PasteHelper:
         """
         use_shift = PasteHelper._focused_window_is_terminal()
 
+        # On a pure X11 session, xdotool resolves the logical Control_L
+        # keysym through the active XKB map. This matters when users swap
+        # CapsLock and Ctrl (ctrl:swapcaps): the Linux keycode 29 used by
+        # uinput/ydotool is the physical left-Ctrl position, which XKB then
+        # interprets as CapsLock. Do not let that lower-level fallback win on
+        # X11 when xdotool can honor the user's logical key mapping.
+        if PasteHelper._is_pure_x11_session():
+            if PasteHelper._simulate_paste_with_xdotool(use_shift):
+                return
+
         # Try uinput first: kernel-level injection that works on both
         # Wayland and X11 with no external tools. Gated on /dev/uinput
         # write access (SteamOS grants it; most distros do not by default).
@@ -182,7 +194,20 @@ class PasteHelper:
             except Exception as e:
                 logger.warning("wtype failed: %s", e)
 
-        # Try xdotool (X11 only)
+        # Try xdotool (X11 only). This is also the final fallback for mixed
+        # sessions where the native target may still be an X11 window.
+        if PasteHelper._simulate_paste_with_xdotool(use_shift):
+            return
+
+        logger.error("No paste simulation method available")
+        logger.info(
+            "Text was copied to clipboard but could not auto-paste. "
+            "Install ydotool or wtype for auto-paste."
+        )
+
+    @staticmethod
+    def _simulate_paste_with_xdotool(use_shift: bool) -> bool:
+        """Try to send the paste shortcut through the active X11 keymap."""
         xdotool_key = "ctrl+shift+v" if use_shift else "ctrl+v"
         for command in command_candidates("xdotool"):
             try:
@@ -192,14 +217,24 @@ class PasteHelper:
                     timeout=3,
                 )
                 logger.info("Paste simulated via xdotool (%s)", xdotool_key)
-                return
+                return True
             except Exception as e:
                 logger.warning("xdotool failed: %s", e)
+        return False
 
-        logger.error("No paste simulation method available")
-        logger.info(
-            "Text was copied to clipboard but could not auto-paste. "
-            "Install ydotool or wtype for auto-paste."
+    @staticmethod
+    def _is_pure_x11_session() -> bool:
+        """Whether X11 is the session protocol rather than XWayland."""
+        session_type = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+        if session_type == "x11":
+            return True
+        if session_type == "wayland":
+            return False
+        # Some launchers do not set XDG_SESSION_TYPE. Having only DISPLAY is
+        # the usual X11 fallback; Wayland sessions normally also expose
+        # WAYLAND_DISPLAY.
+        return bool(os.environ.get("DISPLAY")) and not os.environ.get(
+            "WAYLAND_DISPLAY"
         )
 
     @staticmethod

@@ -26,7 +26,8 @@ def isolate_paste_backend_tests():
 
 class TestCopyToClipboard:
     def test_wl_copy_preferred(self):
-        with patch("shutil.which", return_value="/usr/bin/wl-copy") as mock_which, \
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}), \
+             patch("shutil.which", return_value="/usr/bin/wl-copy") as mock_which, \
              patch("subprocess.run") as mock_run:
             PasteHelper._copy_to_clipboard("hello")
             mock_run.assert_called_once()
@@ -54,6 +55,32 @@ class TestCopyToClipboard:
 
 
 class TestSimulatePaste:
+    @pytest.fixture(autouse=True)
+    def wayland_session(self, monkeypatch):
+        # Keep the existing backend-priority tests deterministic. The X11
+        # regression below explicitly switches this to a pure X11 session.
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+
+    def test_x11_prefers_xdotool_for_remapped_modifier(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
+             patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch.object(PasteHelper, "_focused_window_is_terminal",
+                          return_value=False), \
+             patch.object(PasteHelper, "_simulate_paste_with_xdotool",
+                          wraps=PasteHelper._simulate_paste_with_xdotool) as mock_xdotool, \
+             patch("doubao_murmur.paste.paste_helper.UinputPaster.is_available",
+                   return_value=True), \
+             patch("subprocess.run") as mock_run:
+            PasteHelper._simulate_paste()
+
+            mock_xdotool.assert_called_once_with(False)
+            mock_run.assert_called_once_with(
+                ["xdotool", "key", "ctrl+v"],
+                check=True,
+                timeout=3,
+            )
+
     def test_ydotool_preferred(self):
         with patch("shutil.which", return_value="/usr/bin/ydotool"), \
              patch.object(PasteHelper, "_focused_window_is_terminal",
