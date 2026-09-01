@@ -18,6 +18,26 @@ def is_flatpak() -> bool:
     return os.path.exists(_FLATPAK_MARKER)
 
 
+def is_pure_x11_session() -> bool:
+    """Whether X11 is the session protocol rather than XWayland.
+
+    Shared by the paste path (which skips wl-copy on X11 and prefers
+    xdotool) and hotkey setup (which skips the evdev listener when XRecord
+    already sees every key).
+    """
+    session_type = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+    if session_type == "x11":
+        return True
+    if session_type == "wayland":
+        return False
+    # Some launchers do not set XDG_SESSION_TYPE. Having only DISPLAY is
+    # the usual X11 fallback; Wayland sessions normally also expose
+    # WAYLAND_DISPLAY.
+    return bool(os.environ.get("DISPLAY")) and not os.environ.get(
+        "WAYLAND_DISPLAY"
+    )
+
+
 def command_candidates(tool: str) -> list[list[str]]:
     """Return executable command prefixes for a host helper tool.
 

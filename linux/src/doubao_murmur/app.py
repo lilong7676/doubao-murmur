@@ -13,6 +13,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 from doubao_murmur.app_state import AppState, LoginStatus
+from doubao_murmur.host_tools import is_pure_x11_session
 from doubao_murmur.hotkey.evdev_listener import EvdevListener
 from doubao_murmur.hotkey.manager import HotkeyManager
 from doubao_murmur.hotkey.x11_listener import X11KeyListener
@@ -91,7 +92,11 @@ class DoubaoMurmurApp(Gtk.Application):
         # Prefer the X11 listener: it sees both physical keys and
         # XTEST-injected ones (Steam Input desktop layouts inject
         # controller-mapped keys via XTEST, invisible to evdev).
-        # evdev runs as a fallback in case X11 listener fails to start.
+        # evdev runs as the Wayland backend and as a fallback when XRecord
+        # cannot start. On a pure X11 session with XRecord active it is
+        # skipped: it would re-read the same keys and, by opening every
+        # /dev/input/event* device, risk a 100%-CPU busy-wait on a
+        # continuously-emitting device (mouse/touchpad/gamepad/audio jack).
         x11 = None
         evdev = None
         if X11KeyListener.is_available():
@@ -100,11 +105,12 @@ class DoubaoMurmurApp(Gtk.Application):
                 on_escape=self.hotkey_manager.trigger_cancel,
                 on_keyboard=self.hotkey_manager.trigger_keyboard,
             )
-        if EvdevListener.is_available():
-            evdev = EvdevListener(
-                on_toggle=self.hotkey_manager.trigger_toggle,
-                on_escape=self.hotkey_manager.trigger_cancel,
-            )
+        if x11 is None or not is_pure_x11_session():
+            if EvdevListener.is_available():
+                evdev = EvdevListener(
+                    on_toggle=self.hotkey_manager.trigger_toggle,
+                    on_escape=self.hotkey_manager.trigger_cancel,
+                )
 
         self.hotkey_manager.start(
             overlay_button=None,
@@ -217,12 +223,14 @@ class DoubaoMurmurApp(Gtk.Application):
         PasteHelper.copy_and_paste(text)
 
     def _show_overlay(self) -> None:
+        PasteHelper.remember_focused_window()
         if self.overlay:
             self.overlay.show()
 
     def _hide_overlay(self) -> None:
         if self.overlay:
             self.overlay.hide()
+        PasteHelper.forget_focused_window()
 
     def _update_overlay(self, text: str) -> None:
         if self.overlay:

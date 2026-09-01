@@ -32,6 +32,11 @@ SYN_REPORT = 0
 KEY_LEFTCTRL = 29
 KEY_LEFTSHIFT = 42
 KEY_V = 47
+KEY_Y = 21
+
+# Map a paste chord's letter to its Linux input keycode. Shared with the
+# ydotool backend in paste_helper, which uses the same keycodes.
+LETTER_KEYCODES = {"v": KEY_V, "y": KEY_Y}
 
 # uinput ioctls (linux/uinput.h)
 UI_SET_EVBIT = 0x40045564
@@ -68,8 +73,9 @@ class UinputPaster:
             return False
 
     @staticmethod
-    def paste(use_shift: bool = False) -> bool:
-        """Inject the paste chord. Returns True on success."""
+    def paste(letter: str = "v", use_shift: bool = False) -> bool:
+        """Inject the paste chord ``Ctrl(+Shift)+letter``. Returns True on success."""
+        key = LETTER_KEYCODES[letter]
         try:
             fd = os.open(_UINPUT_PATH, os.O_WRONLY | os.O_NONBLOCK)
         except OSError as e:
@@ -77,8 +83,8 @@ class UinputPaster:
             return False
         try:
             fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
-            for key in (KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V):
-                fcntl.ioctl(fd, UI_SET_KEYBIT, key)
+            for k in (KEY_LEFTCTRL, KEY_LEFTSHIFT, key):
+                fcntl.ioctl(fd, UI_SET_KEYBIT, k)
 
             setup = struct.pack(
                 "HHHH80sI",
@@ -96,7 +102,7 @@ class UinputPaster:
             keys_down = [KEY_LEFTCTRL]
             if use_shift:
                 keys_down.append(KEY_LEFTSHIFT)
-            keys_down.append(KEY_V)
+            keys_down.append(key)
 
             for key in keys_down:
                 UinputPaster._emit(fd, EV_KEY, key, 1)

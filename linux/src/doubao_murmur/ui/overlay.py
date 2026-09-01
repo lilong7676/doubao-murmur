@@ -79,6 +79,8 @@ class Overlay:
         self._window.set_decorated(False)
         self._window.set_default_size(OVERLAY_WIDTH, OVERLAY_HEIGHT)
         self._window.set_resizable(False)
+        self._window.set_can_focus(False)
+        self._window.set_focusable(False)
         self._window.add_css_class("overlay-window")
         apply_overlay_window_hints(self._window, OverlayRole.STATUS)
 
