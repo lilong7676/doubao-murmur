@@ -12,7 +12,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId, MessageBoxW,
+    GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, MessageBoxW,
     SetWindowLongPtrW, GWL_EXSTYLE, IDYES, MB_ICONINFORMATION, MB_ICONQUESTION, MB_ICONWARNING,
     MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, SW_SHOWNORMAL, WS_EX_APPWINDOW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
@@ -28,6 +28,15 @@ pub fn wide(text: &str) -> Vec<u16> {
 /// an integer keeps this independent of which version that is.
 pub fn hwnd_from_isize(raw: isize) -> HWND {
     HWND(raw as *mut c_void)
+}
+
+/// Whether a raw HWND still refers to a live window.
+///
+/// The overlay can leave a zombie Tauri window object behind once the WebView2
+/// browser process dies, and the manager keeps reporting it. IsWindow() is the
+/// ground truth on the Win32 side.
+pub fn is_window(raw: isize) -> bool {
+    unsafe { IsWindow(hwnd_from_isize(raw)).as_bool() }
 }
 
 /// Makes a window that never takes focus and never appears in the taskbar or

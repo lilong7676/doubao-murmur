@@ -45,6 +45,7 @@ pub fn run() {
             let settings = Settings::load();
 
             overlay::build(&handle).map_err(|e| format!("overlay window: {e}"))?;
+            overlay::start_heartbeat(&handle);
 
             tray::create(
                 &handle,

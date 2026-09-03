@@ -92,7 +92,22 @@
 
       if (window.__TAURI__) {
         window.__TAURI__.event.listen("overlay-state", (event) => apply(event.payload));
+
+        // Tell the Rust side this page is alive. When the heartbeat stops
+        // (crashed renderer, dead WebView2 process), overlay.rs rebuilds the
+        // window on the next recording.
+        const beat = () => {
+          try { window.__TAURI__.event.emit("overlay-heartbeat"); } catch {}
+        };
+        beat();
+        setInterval(beat, 3000);
       }
+
+      // Lets the Rust side detect a renderer that crashed and came back with a
+      // blank page: the flag disappears when the page state resets, and the
+      // heartbeat in overlay.rs then reloads the page (bounded retries).
+      window.__murmurReady = true;
+      sessionStorage.removeItem("murmurReloads");
     </script>
   </body>
 </html>
