@@ -175,13 +175,13 @@ class PasteHelper:
     @staticmethod
     def _simulate_paste() -> None:
         """Simulate the paste keystroke for the focused window."""
-        PasteHelper._restore_focused_window()
-        letter, use_shift = PasteHelper._paste_chord()
 
         # Give slow-to-focus applications (notably Electron) a beat to route
         # input focus to the editor widget before the synthetic chord lands.
-        time.sleep(PASTE_FOCUS_DELAY)
+        if PasteHelper._restore_focused_window():
+            time.sleep(PASTE_FOCUS_DELAY)
 
+        letter, use_shift = PasteHelper._paste_chord()
         # On a pure X11 session, xdotool resolves the logical Control_L
         # keysym through the active XKB map. This matters when users swap
         # CapsLock and Ctrl (ctrl:swapcaps): the Linux keycode 29 used by

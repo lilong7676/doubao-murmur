@@ -5,9 +5,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+import doubao_murmur.paste.paste_helper as paste_helper
 from doubao_murmur.paste.paste_helper import PasteHelper
 from doubao_murmur.paste.uinput_injector import UinputPaster
-
+from doubao_murmur.config import PASTE_FOCUS_DELAY
 
 @pytest.fixture(autouse=True)
 def isolate_paste_backend_tests():
@@ -106,6 +107,78 @@ class TestSimulatePaste:
             assert mock_run.call_args_list[3].args[0] == [
                 "xdotool", "key", "--delay", "50", "ctrl+shift+v"
             ]
+
+    def test_simulate_paste_skips_focus_delay_when_window_not_restored(self):
+        mock_sleep = MagicMock()
+
+        with (
+                patch.object(
+                    PasteHelper,
+                    "_restore_focused_window",
+                    return_value=False,
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_is_pure_x11_session",
+                    return_value=True,
+                ),
+                patch(
+                    "doubao_murmur.paste.paste_helper.time.sleep"
+                ) as mock_sleep,
+                patch.object(
+                    PasteHelper,
+                    "_paste_chord",
+                    return_value=("v", False),
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_simulate_paste_with_xdotool",
+                    return_value=True,
+                ),
+                patch.object(
+                    paste_helper,
+                    "time",
+                    MagicMock(sleep=mock_sleep),
+                ),
+        ):
+            PasteHelper._simulate_paste()
+            mock_sleep.assert_not_called()
+
+    def test_simulate_paste_waits_after_window_restored(self):
+        mock_sleep = MagicMock()
+
+        with (
+                patch.object(
+                    PasteHelper,
+                    "_restore_focused_window",
+                    return_value=True,
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_is_pure_x11_session",
+                    return_value=True,
+                ),
+                patch(
+                    "doubao_murmur.paste.paste_helper.time.sleep"
+                ) as mock_sleep,
+                patch.object(
+                    PasteHelper,
+                    "_paste_chord",
+                    return_value=("v", False),
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_simulate_paste_with_xdotool",
+                    return_value=True,
+                ),
+                patch.object(
+                    paste_helper,
+                    "time",
+                    MagicMock(sleep=mock_sleep),
+                ),
+        ):
+            PasteHelper._simulate_paste()
+            mock_sleep.assert_called_once_with(PASTE_FOCUS_DELAY)
 
     def test_x11_prefers_xdotool_for_remapped_modifier(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
