@@ -24,6 +24,23 @@ pub enum AsrEvent {
     AuthError,
 }
 
+/// Transport errors never prove that saved credentials are invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorRecovery {
+    KeepCredentials,
+    Reauthenticate,
+}
+
+impl AsrEvent {
+    pub fn error_recovery(&self) -> Option<ErrorRecovery> {
+        match self {
+            Self::Error(_) => Some(ErrorRecovery::KeepCredentials),
+            Self::AuthError => Some(ErrorRecovery::Reauthenticate),
+            _ => None,
+        }
+    }
+}
+
 enum Ctl {
     Finish,
     Disconnect,
@@ -314,6 +331,35 @@ pub fn is_auth_error(code: i64, message: &str) -> bool {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn transport_errors_preserve_credentials_including_normal_server_close() {
+        for message in [
+            "连接已关闭", // Observed after server close code 1000.
+            "连接超时",
+            "DNS lookup failed",
+            "TLS handshake failed",
+            "HTTP error: 403 Forbidden", // May be a proxy/policy refusal.
+        ] {
+            assert_eq!(AsrEvent::Error(message.into()).error_recovery(),
+                       Some(ErrorRecovery::KeepCredentials));
+        }
+    }
+
+    #[test]
+    fn explicit_auth_rejection_still_requires_login() {
+        let seen = std::sync::Mutex::new(Vec::new());
+        let emit = |event: AsrEvent| seen.lock().unwrap().push(event.error_recovery());
+        assert!(handle_message(r#"{"code":709599054,"message":"invalid"}"#, &emit));
+        assert_eq!(*seen.lock().unwrap(), vec![Some(ErrorRecovery::Reauthenticate)]);
+    }
+
+    #[test]
+    fn successful_events_do_not_trigger_error_recovery() {
+        for event in [AsrEvent::Opened, AsrEvent::Result("text".into()), AsrEvent::Finished] {
+            assert_eq!(event.error_recovery(), None);
+        }
+    }
 
     fn sample_params() -> AsrParams {
         let mut params = AsrParams::default();

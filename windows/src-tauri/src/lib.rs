@@ -10,6 +10,7 @@
 
 mod asr;
 mod audio;
+mod clipboard_transaction;
 mod autostart;
 mod config;
 mod controller;
