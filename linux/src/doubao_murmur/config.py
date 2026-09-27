@@ -52,6 +52,7 @@ CONFIG_DIR_NAME = "doubao-murmur"
 PARAMS_FILE = "asr_params.json"
 KEYBOARD_FILE = "keyboard.json"
 OVERLAY_FILE = "overlay.json"
+SETTINGS_FILE = "settings.json"
 
 
 def get_config_dir() -> Path:
@@ -77,6 +78,11 @@ def get_keyboard_config_path() -> Path:
 def get_overlay_config_path() -> Path:
     """Get the path to the overlay window position JSON file."""
     return get_config_dir() / OVERLAY_FILE
+
+
+def get_settings_path() -> Path:
+    """Get the path to the user preferences JSON file."""
+    return get_config_dir() / SETTINGS_FILE
 
 
 # --- Timeouts ---

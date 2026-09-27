@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _APP_ICON = "com.doubao.Murmur"
 _FALLBACK_ICON = "audio-input-microphone"
+_KEYBOARD_HOTKEY_LABEL = "Ctrl+Super+Shift 呼出软键盘"
 
 
 class TrayIcon:
@@ -38,6 +39,8 @@ class TrayIcon:
         on_quit_clicked,
         on_help_clicked=None,
         on_keyboard_clicked=None,
+        keyboard_hotkey_enabled=None,
+        on_keyboard_hotkey_toggled=None,
     ) -> None:
         self.app_state = app_state
         self._on_login_clicked = on_login_clicked
@@ -45,6 +48,9 @@ class TrayIcon:
         self._on_quit_clicked = on_quit_clicked
         self._on_help_clicked = on_help_clicked
         self._on_keyboard_clicked = on_keyboard_clicked
+        self._keyboard_hotkey_enabled = keyboard_hotkey_enabled
+        self._on_keyboard_hotkey_toggled = on_keyboard_hotkey_toggled
+        self._keyboard_hotkey_check: Gtk.CheckButton | None = None
         self._sni: SniTray | None = None
         self._window: Gtk.Window | None = None
         self._status_label: Gtk.Label | None = None
@@ -120,6 +126,15 @@ class TrayIcon:
             items.append(
                 {"label": "⌨ 软键盘", "callback": self._on_keyboard_clicked}
             )
+        if self._has_keyboard_hotkey_toggle():
+            enabled = self._keyboard_hotkey_enabled()
+            items.append(
+                {
+                    "label": _KEYBOARD_HOTKEY_LABEL,
+                    "checked": enabled,
+                    "callback": lambda: self._set_keyboard_hotkey(not enabled),
+                }
+            )
         if self._on_help_clicked:
             items.append({"label": "使用帮助", "callback": self._on_help_clicked})
         items.append(None)
@@ -156,6 +171,18 @@ class TrayIcon:
             )
             box.append(keyboard_button)
 
+        if self._has_keyboard_hotkey_toggle():
+            self._keyboard_hotkey_check = Gtk.CheckButton(
+                label=_KEYBOARD_HOTKEY_LABEL
+            )
+            self._keyboard_hotkey_check.set_active(
+                self._keyboard_hotkey_enabled()
+            )
+            self._keyboard_hotkey_check.connect(
+                "toggled", lambda b: self._set_keyboard_hotkey(b.get_active())
+            )
+            box.append(self._keyboard_hotkey_check)
+
         if self._on_help_clicked:
             help_button = Gtk.Button(label="使用帮助")
             help_button.connect("clicked", lambda _: self._on_help_clicked())
@@ -186,6 +213,23 @@ class TrayIcon:
                 self._primary_button.set_label("退出登录")
             else:
                 self._primary_button.set_label("登录豆包")
+        if self._keyboard_hotkey_check:
+            # set_active only emits "toggled" on an actual change, so this
+            # can't loop back through _set_keyboard_hotkey.
+            self._keyboard_hotkey_check.set_active(
+                self._keyboard_hotkey_enabled()
+            )
+
+    def _has_keyboard_hotkey_toggle(self) -> bool:
+        return bool(
+            self._keyboard_hotkey_enabled and self._on_keyboard_hotkey_toggled
+        )
+
+    def _set_keyboard_hotkey(self, enabled: bool) -> None:
+        """Shared by the tray checkbox and the control window checkbox."""
+        if enabled != self._keyboard_hotkey_enabled():
+            self._on_keyboard_hotkey_toggled(enabled)
+        self._refresh()
 
     def _on_primary_clicked(self, _button) -> None:
         if self.app_state.login_status == LoginStatus.LOGGED_IN:
