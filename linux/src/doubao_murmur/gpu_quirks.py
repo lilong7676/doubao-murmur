@@ -18,11 +18,13 @@ from typing import MutableMapping
 
 logger = logging.getLogger(__name__)
 
-# Either is present while the proprietary kernel module is loaded; the
-# /sys one is also visible inside the Flatpak sandbox.
+# Any of these is present while the proprietary driver is loaded. The
+# device node is the one the Flatpak sandbox reliably sees, since the
+# manifest grants --device=all.
 NVIDIA_MARKERS = (
     Path("/proc/driver/nvidia/version"),
     Path("/sys/module/nvidia/version"),
+    Path("/dev/nvidiactl"),
 )
 
 NVIDIA_ENV = {
