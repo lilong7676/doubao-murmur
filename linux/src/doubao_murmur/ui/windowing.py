@@ -16,6 +16,9 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk, Gdk
 
 from doubao_murmur.config import OVERLAY_WIDTH
+from doubao_murmur.paste.hyprland_window import (
+    active_monitor_name as hyprland_active_monitor_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,20 @@ class OverlayRole(Enum):
     # config, draggable by the user), so it is pinned above + non-focusing
     # like the others but never auto-positioned.
     KEYBOARD = "keyboard"
+
+
+def _monitor_for_overlay(display):
+    """Return the GDK monitor matching Hyprland's focused connector."""
+    if display is None:
+        return None
+    monitors = display.get_monitors()
+    connector = hyprland_active_monitor_name()
+    if connector:
+        for index in range(monitors.get_n_items()):
+            monitor = monitors.get_item(index)
+            if monitor is not None and monitor.get_connector() == connector:
+                return monitor
+    return monitors.get_item(0) if monitors.get_n_items() else None
 
 
 def apply_overlay_window_hints(window: Gtk.Window, role: OverlayRole) -> None:
@@ -181,7 +198,7 @@ def _x11_pin_above(window: Gtk.Window, role: OverlayRole, state: dict) -> bool:
     x = y = None
     if role != OverlayRole.KEYBOARD:
         display = window.get_display()
-        monitor = display.get_monitors().get_item(0) if display else None
+        monitor = _monitor_for_overlay(display)
         if monitor is not None:
             geo = monitor.get_geometry()
             x = geo.x + (geo.width - width) // 2
