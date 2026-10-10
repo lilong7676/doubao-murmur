@@ -17,7 +17,12 @@ import os
 import subprocess
 import time
 
-from doubao_murmur.config import PASTE_DELAY, PASTE_FOCUS_DELAY, PASTE_KEY_DELAY_MS
+from doubao_murmur.config import (
+    PASTE_DELAY,
+    PASTE_FOCUS_DELAY,
+    PASTE_KEY_DELAY_MS,
+    X11_SYNC_TIMEOUT,
+)
 from doubao_murmur.host_tools import command_candidates
 from doubao_murmur.paste.hyprland_window import (
     active_window_class as hyprland_active_window_class,
@@ -285,7 +290,7 @@ class PasteHelper:
                 subprocess.run(
                     command + ["windowactivate", "--sync", window_id],
                     check=True,
-                    timeout=3,
+                    timeout=X11_SYNC_TIMEOUT,
                 )
                 # windowactivate raises and focuses the frame, but Electron
                 # apps can leave input focus on the overlay; an explicit focus
@@ -294,7 +299,7 @@ class PasteHelper:
                 subprocess.run(
                     command + ["windowfocus", "--sync", window_id],
                     check=False,
-                    timeout=3,
+                    timeout=X11_SYNC_TIMEOUT,
                 )
                 logger.info("Restored X11 paste target: %s", window_id)
                 return True

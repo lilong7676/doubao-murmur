@@ -8,7 +8,7 @@ import pytest
 import doubao_murmur.paste.paste_helper as paste_helper
 from doubao_murmur.paste.paste_helper import PasteHelper
 from doubao_murmur.paste.uinput_injector import UinputPaster
-from doubao_murmur.config import PASTE_FOCUS_DELAY
+from doubao_murmur.config import PASTE_FOCUS_DELAY, X11_SYNC_TIMEOUT
 
 @pytest.fixture(autouse=True)
 def isolate_paste_backend_tests():
@@ -104,6 +104,8 @@ class TestSimulatePaste:
             assert mock_run.call_args_list[2].args[0] == [
                 "xdotool", "windowfocus", "--sync", "4242"
             ]
+            assert mock_run.call_args_list[1].kwargs["timeout"] == X11_SYNC_TIMEOUT
+            assert mock_run.call_args_list[2].kwargs["timeout"] == X11_SYNC_TIMEOUT
             assert mock_run.call_args_list[3].args[0] == [
                 "xdotool", "key", "--delay", "50", "ctrl+shift+v"
             ]
