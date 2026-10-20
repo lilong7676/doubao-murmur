@@ -36,6 +36,24 @@ fn shortcut_for(process: Option<&str>) -> Shortcut {
 }
 
 pub fn deliver(text: &str, mode: PasteMode) {
+    // One worker preserves completion order and prevents overlapping restores.
+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<(String, PasteMode)>> =
+        std::sync::OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<(String, PasteMode)>();
+        std::thread::spawn(move || {
+            for (text, mode) in rx {
+                deliver_now(&text, mode);
+            }
+        });
+        tx
+    });
+    if queue.send((text.to_owned(), mode)).is_err() {
+        log_error!("Text delivery worker unavailable");
+    }
+}
+
+fn deliver_now(text: &str, mode: PasteMode) {
     if text.is_empty() {
         return;
     }
@@ -47,36 +65,55 @@ pub fn deliver(text: &str, mode: PasteMode) {
         return;
     }
 
-    if let Err(e) = copy_to_clipboard(text) {
-        log_error!("Clipboard write failed: {e}");
-        return;
-    }
-
-    std::thread::sleep(crate::config::PASTE_DELAY);
-
     let process = win32::foreground_process_name();
     let shortcut = shortcut_for(process.as_deref());
-
     release_stuck_modifiers();
-    send_shortcut(shortcut);
-    log_info!(
-        "Pasted into '{}' using {shortcut:?}",
-        process.as_deref().unwrap_or("unknown")
-    );
-}
-
-pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
-    // arboard retries internally when another process holds the clipboard open,
-    // which is the most common cause of a dropped paste.
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())
+    let transaction = match crate::clipboard_transaction::Transaction::begin(text) {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            log_error!("Protected clipboard insertion aborted: {e}");
+            win32::warn_box(
+                "无法安全备份剪贴板，已保留原内容，本次文字未输入。请复制普通文本或图片后重试。",
+            );
+            return;
+        }
+    };
+    std::thread::sleep(crate::config::PASTE_DELAY);
+    if !transaction.still_owned() {
+        log_warn!("Clipboard changed before paste; insertion cancelled to preserve new copy");
+        return;
+    }
+    let pasted = send_shortcut(shortcut);
+    // SendInput only queues keys. Allow the target time to read the clipboard.
+    // This is a conservative fallback, not a cross-application paste ACK.
+    if pasted {
+        std::thread::sleep(std::time::Duration::from_millis(700));
+    }
+    match transaction.restore() {
+        Ok(true) => log_info!("Original clipboard restored"),
+        Ok(false) => log_info!("New clipboard content retained; restore skipped"),
+        Err(e) => log_warn!("Clipboard restore failed: {e}"),
+    }
+    if pasted {
+        log_info!(
+            "Pasted into '{}' using {shortcut:?}",
+            process.as_deref().unwrap_or("unknown")
+        );
+    }
 }
 
 /// Drops any modifier the user might still be holding. Without this a held Alt
 /// turns our Ctrl+V into Ctrl+Alt+V and nothing is pasted.
 fn release_stuck_modifiers() {
     let modifiers = [
-        VK_LMENU, VK_RMENU, VK_LCONTROL, VK_RCONTROL, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_LWIN,
+        VK_RWIN,
     ];
 
     let mut inputs = Vec::new();
@@ -93,7 +130,7 @@ fn release_stuck_modifiers() {
     }
 }
 
-fn send_shortcut(shortcut: Shortcut) {
+fn send_shortcut(shortcut: Shortcut) -> bool {
     let inputs = match shortcut {
         Shortcut::CtrlShiftV => vec![
             scan_input(SC_LCONTROL, false, false),
@@ -117,7 +154,7 @@ fn send_shortcut(shortcut: Shortcut) {
         ],
     };
 
-    send(&inputs);
+    send(&inputs)
 }
 
 fn type_unicode(text: &str) {
@@ -166,7 +203,7 @@ fn key_input(virtual_key: u16, scan_code: u16, flags: KEYBD_EVENT_FLAGS) -> INPU
     }
 }
 
-fn send(inputs: &[INPUT]) {
+fn send(inputs: &[INPUT]) -> bool {
     let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
         // Most common cause: the focused window belongs to an elevated process and
@@ -176,6 +213,7 @@ fn send(inputs: &[INPUT]) {
             inputs.len()
         );
     }
+    sent as usize == inputs.len()
 }
 
 #[cfg(test)]

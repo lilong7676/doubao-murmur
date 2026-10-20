@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::asr::{AsrClient, AsrEvent};
+use crate::asr::{AsrClient, AsrEvent, ErrorRecovery};
 use crate::audio::AudioCapture;
 use crate::hotkey::{self, HotkeyEvent};
 use crate::overlay::{self, OverlayState};
@@ -92,7 +92,6 @@ pub fn spawn(app: &AppHandle, settings: Settings) {
         generation: 0,
         logged_in: params::has_saved(),
         text: String::new(),
-        using_cached: false,
         awaiting_final: false,
         quiet_epoch: 0,
         asr: AsrClient::new(),
@@ -112,7 +111,6 @@ struct Controller {
     generation: u64,
     logged_in: bool,
     text: String,
-    using_cached: bool,
     awaiting_final: bool,
     /// Bumped each time completion is rescheduled, so only the newest
     /// `StreamQuiet` event is honoured.
@@ -227,7 +225,6 @@ impl Controller {
         match params::load() {
             Some(params) => {
                 log_info!("Using cached ASR params");
-                self.using_cached = true;
                 self.connect(params, audio_rx);
             }
             None => {
@@ -306,6 +303,26 @@ impl Controller {
     }
 
     fn on_asr(&mut self, event: AsrEvent) {
+        if let Some(recovery) = event.error_recovery() {
+            match recovery {
+                ErrorRecovery::Reauthenticate => self.handle_auth_failure(),
+                ErrorRecovery::KeepCredentials => {
+                    if self.state == RecordingState::Idle {
+                        return;
+                    }
+                    if let AsrEvent::Error(message) = &event {
+                        log_error!("ASR connection error (credentials retained): {message}");
+                    }
+                    // Release the microphone/socket immediately. Do not paste a
+                    // partial transcript or invalidate login on a transport error.
+                    self.reset_to_idle();
+                    overlay::show(&self.app);
+                    self.push_overlay(Some("连接已结束，请重试"));
+                    self.schedule_reset(config::AUTH_EXPIRY_DELAY);
+                }
+            }
+            return;
+        }
         match event {
             AsrEvent::Opened => {
                 if self.state == RecordingState::Starting {
@@ -333,21 +350,7 @@ impl Controller {
                     self.complete();
                 }
             }
-            AsrEvent::Error(message) => {
-                if self.state == RecordingState::Idle {
-                    return;
-                }
-                log_error!("ASR error: {message}");
-                if self.using_cached {
-                    // Stale cookies are by far the likeliest cause when we reused
-                    // saved credentials.
-                    self.handle_auth_failure();
-                } else {
-                    self.push_overlay(Some("连接出错"));
-                    self.schedule_reset(config::AUTH_EXPIRY_DELAY);
-                }
-            }
-            AsrEvent::AuthError => self.handle_auth_failure(),
+            AsrEvent::Error(_) | AsrEvent::AuthError => unreachable!("handled above"),
         }
     }
 
@@ -356,10 +359,10 @@ impl Controller {
         log_info!("Completing transcription ({} chars)", text.chars().count());
 
         if !text.is_empty() {
-            // paste::deliver sleeps between the copy and the keystroke, so it must
-            // not run on the controller thread.
+            // Delivery queues onto a single worker; snapshots happen there,
+            // immediately before insertion, never when recording starts.
             let mode = self.settings.paste_mode;
-            std::thread::spawn(move || paste::deliver(&text, mode));
+            paste::deliver(&text, mode);
         }
 
         self.reset_to_idle();
@@ -369,7 +372,6 @@ impl Controller {
         self.awaiting_final = false;
         self.audio.stop();
         self.asr.disconnect();
-        self.using_cached = false;
         self.text.clear();
         self.set_state(RecordingState::Idle);
         overlay::hide(&self.app);
@@ -378,7 +380,6 @@ impl Controller {
     fn handle_auth_failure(&mut self) {
         log_warn!("Auth failure, clearing cached params");
         params::clear();
-        self.using_cached = false;
         self.logged_in = false;
         self.reset_to_idle();
         self.refresh_tray();
