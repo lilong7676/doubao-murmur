@@ -17,6 +17,9 @@ import time
 
 from doubao_murmur.config import PASTE_DELAY
 from doubao_murmur.host_tools import command_candidates
+from doubao_murmur.paste.hyprland_window import (
+    active_window_class as hyprland_active_window_class,
+)
 from doubao_murmur.paste.kwin_window import active_window_class as kwin_active_window_class
 from doubao_murmur.paste.uinput_injector import UinputPaster
 
@@ -222,9 +225,8 @@ class PasteHelper:
     def _focused_window_classes() -> list[str]:
         """Lowercased WM_CLASS entries of the focused window.
 
-        On KDE Plasma Wayland (e.g. SteamOS desktop mode) X11 tools
-        cannot see the active window, so ask KWin first via its
-        scripting API.
+        On Hyprland or KDE Plasma Wayland, X11 tools cannot see the active
+        window, so ask the compositor first via its native control surface.
 
         `getwindowclassname` only exists in recent xdotool releases;
         Debian/Ubuntu still ship 3.20160805, where it exits with
@@ -233,6 +235,10 @@ class PasteHelper:
         back to xprop, which lives in x11-utils and is present on any
         desktop that has xdotool.
         """
+        hyprland_class = hyprland_active_window_class()
+        if hyprland_class:
+            return [hyprland_class]
+
         kwin_class = kwin_active_window_class()
         if kwin_class:
             return [kwin_class]

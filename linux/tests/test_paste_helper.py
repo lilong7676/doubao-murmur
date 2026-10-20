@@ -8,6 +8,22 @@ import pytest
 from doubao_murmur.paste.paste_helper import PasteHelper
 
 
+@pytest.fixture(autouse=True)
+def isolate_paste_backend_tests():
+    """Keep fallback tests independent of live compositor/uinput state."""
+    with patch(
+        "doubao_murmur.paste.paste_helper.hyprland_active_window_class",
+        return_value="",
+    ), patch(
+        "doubao_murmur.paste.paste_helper.kwin_active_window_class",
+        return_value="",
+    ), patch(
+        "doubao_murmur.paste.paste_helper.UinputPaster.is_available",
+        return_value=False,
+    ):
+        yield
+
+
 class TestCopyToClipboard:
     def test_wl_copy_preferred(self):
         with patch("shutil.which", return_value="/usr/bin/wl-copy") as mock_which, \
@@ -127,6 +143,24 @@ class TestSimulatePaste:
 
 
 class TestTerminalDetection:
+    def test_hyprland_kitty_uses_terminal_paste_chord(self):
+        with patch(
+            "doubao_murmur.paste.paste_helper.hyprland_active_window_class",
+            return_value="kitty",
+        ), patch(
+            "doubao_murmur.paste.paste_helper.kwin_active_window_class"
+        ) as kwin_probe, patch(
+            "doubao_murmur.paste.paste_helper.UinputPaster.is_available",
+            return_value=True,
+        ), patch(
+            "doubao_murmur.paste.paste_helper.UinputPaster.paste",
+            return_value=True,
+        ) as paste:
+            PasteHelper._simulate_paste()
+
+        kwin_probe.assert_not_called()
+        paste.assert_called_once_with(use_shift=True)
+
     def _run_detection(self, classname: bytes) -> bool:
         def which_side_effect(cmd):
             if cmd == "xdotool":
