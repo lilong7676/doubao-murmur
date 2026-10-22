@@ -90,6 +90,20 @@ STOP_TRAILING_SILENCE_MS = 200
 FINAL_RESULT_QUIET_PERIOD = 0.25  # seconds
 DEBOUNCE_INTERVAL = 0.3  # seconds
 PASTE_DELAY = 0.05  # seconds between copy and paste simulation
+# After reactivating the target window, wait this long for slow-to-focus apps
+# (notably Electron) to route input focus to the editor widget before the
+# synthetic paste chord is injected.
+PASTE_FOCUS_DELAY = 0.1  # seconds
+# Inter-key delay for the xdotool paste chord. Electron/Chromium can drop a
+# chord whose Ctrl and V arrive in the same instant; a short pause lets it
+# register the modifier before the letter.
+PASTE_KEY_DELAY_MS = 50
+# Upper bound for the two xdotool windowactivate/windowfocus --sync waits in
+# PasteHelper._restore_focused_window(). xdotool polls the window manager every
+# 30ms and only gives up after ~15s, so a healthy activation returns within one
+# poll and only a refused or stalled one burns the whole budget -- and that
+# whole budget blocks the GTK main thread, hence the tighter cap.
+X11_SYNC_TIMEOUT = 1.0  # seconds
 AUTH_EXPIRY_DELAY = 2.0  # seconds before resetting after auth error
 
 # --- Overlay UI ---
