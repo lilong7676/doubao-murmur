@@ -1,5 +1,6 @@
 """Tests for PasteHelper."""
 
+import os
 import subprocess
 from unittest.mock import patch, MagicMock
 
@@ -90,6 +91,8 @@ class TestSimulatePaste:
         remembered = MagicMock(stdout=b"4242\n")
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
              patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch.object(PasteHelper, "_focus_is_our_window",
+                          return_value=True), \
              patch.object(PasteHelper, "_paste_chord",
                           return_value=("v", True)), \
              patch("subprocess.run", side_effect=[remembered, MagicMock(),
@@ -155,6 +158,11 @@ class TestSimulatePaste:
         with (
                 patch.object(
                     PasteHelper,
+                    "_focus_is_our_window",
+                    return_value=False,
+                ),
+                patch.object(
+                    PasteHelper,
                     "_restore_focused_window",
                     return_value=False,
                 ),
@@ -191,6 +199,11 @@ class TestSimulatePaste:
         with (
                 patch.object(
                     PasteHelper,
+                    "_focus_is_our_window",
+                    return_value=True,
+                ),
+                patch.object(
+                    PasteHelper,
                     "_restore_focused_window",
                     return_value=True,
                 ),
@@ -221,9 +234,54 @@ class TestSimulatePaste:
             PasteHelper._simulate_paste()
             mock_sleep.assert_called_once_with(PASTE_FOCUS_DELAY)
 
+    def test_simulate_paste_leaves_a_clicked_window_alone(self):
+        # Hotkey first, then click the window to paste into: the focus is on
+        # somebody else's window, so the remembered target must stay untouched
+        # and the chord must land where the user clicked.
+        mock_sleep = MagicMock()
+
+        with (
+                patch.object(
+                    PasteHelper,
+                    "_focus_is_our_window",
+                    return_value=False,
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_restore_focused_window",
+                ) as mock_restore,
+                patch.object(
+                    PasteHelper,
+                    "_is_pure_x11_session",
+                    return_value=True,
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_paste_chord",
+                    return_value=("v", False),
+                ),
+                patch.object(
+                    PasteHelper,
+                    "_simulate_paste_with_xdotool",
+                    return_value=True,
+                ) as mock_xdotool,
+                patch.object(
+                    paste_helper,
+                    "time",
+                    MagicMock(sleep=mock_sleep),
+                ),
+        ):
+            PasteHelper._simulate_paste()
+
+            mock_restore.assert_not_called()
+            mock_sleep.assert_not_called()
+            mock_xdotool.assert_called_once_with("v", False)
+
     def test_x11_prefers_xdotool_for_remapped_modifier(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
              patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch.object(PasteHelper, "_focus_is_our_window",
+                          return_value=False), \
              patch.object(PasteHelper, "_paste_chord",
                           return_value=("v", False)), \
              patch.object(PasteHelper, "_simulate_paste_with_xdotool",
@@ -328,6 +386,49 @@ class TestSimulatePaste:
                 "flatpak-spawn", "--host", "ydotool", "key",
                 "29:1", "47:1", "47:0", "29:0"
             ]
+
+
+class TestFocusIsOurWindow:
+    """Whether the active X11 window belongs to this process."""
+
+    @staticmethod
+    def _probe(stdout: bytes = b"", error: Exception | None = None) -> bool:
+        result = MagicMock(stdout=stdout)
+
+        def fake_run(command, **kwargs):
+            if error is not None:
+                raise error
+            return result
+
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
+             patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch("subprocess.run", side_effect=fake_run) as mock_run:
+            our_window = PasteHelper._focus_is_our_window()
+            assert mock_run.call_args[0][0] == [
+                "xdotool", "getactivewindow", "getwindowpid"
+            ]
+            return our_window
+
+    def test_own_window_by_pid(self):
+        assert self._probe(f"{os.getpid()}\n".encode()) is True
+
+    def test_other_window_by_pid(self):
+        assert self._probe(b"1\n") is False
+
+    def test_unreadable_pid_counts_as_ours(self):
+        # xdotool prints 0 for windows that never set _NET_WM_PID.
+        for stdout in (b"0\n", b"\n", b"unknown\n"):
+            assert self._probe(stdout) is True
+
+    def test_failed_probe_counts_as_ours(self):
+        timeout = subprocess.TimeoutExpired(["xdotool"], 3)
+        assert self._probe(error=timeout) is True
+
+    def test_wayland_session_never_probes(self):
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}), \
+             patch("subprocess.run") as mock_run:
+            assert PasteHelper._focus_is_our_window() is False
+            mock_run.assert_not_called()
 
 
 class TestPasteChord:

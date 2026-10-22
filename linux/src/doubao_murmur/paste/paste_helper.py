@@ -183,7 +183,11 @@ class PasteHelper:
 
         # Give slow-to-focus applications (notably Electron) a beat to route
         # input focus to the editor widget before the synthetic chord lands.
-        if PasteHelper._restore_focused_window():
+        # Only do that after re-activating the remembered target: when one of
+        # our own windows did not take the focus away, the user has already
+        # chosen the target by clicking it and the chord must land there.
+        if (PasteHelper._focus_is_our_window()
+                and PasteHelper._restore_focused_window()):
             time.sleep(PASTE_FOCUS_DELAY)
 
         letter, use_shift = PasteHelper._paste_chord()
@@ -313,6 +317,42 @@ class PasteHelper:
             except Exception as e:
                 logger.warning("Could not restore X11 paste target: %s", e)
         return False
+
+    @staticmethod
+    def _focus_is_our_window() -> bool:
+        """Whether the active X11 window belongs to this process.
+
+        `_restore_focused_window()` re-activates the remembered target, which
+        is only the right thing when one of our own windows took the focus
+        away: the recording overlay is mapped without input hints, but XFCE
+        and some other window managers still focus it. When the user presses
+        the hotkey first and then clicks the window to paste into, the active
+        window is somebody else's, and stealing the focus back would undo
+        that choice.
+
+        `_NET_WM_PID` is used instead of the window class because a plain
+        Gtk.Window derives its class from `g_get_prgname()`: "doubao-murmur"
+        when installed, but "python3" when run from a source checkout.
+        Unreadable values count as "ours" so a broken probe falls back to the
+        unconditional restore instead of silently disabling auto-paste.
+        """
+        if not PasteHelper._is_pure_x11_session():
+            return False
+        for command in command_candidates("xdotool"):
+            try:
+                result = subprocess.run(
+                    command + ["getactivewindow", "getwindowpid"],
+                    capture_output=True,
+                    check=True,
+                    timeout=3,
+                )
+                pid = result.stdout.decode().strip()
+                # xdotool prints 0 for windows without _NET_WM_PID.
+                if pid.isdigit() and int(pid) > 0:
+                    return int(pid) == os.getpid()
+            except Exception as e:
+                logger.debug("Active window pid lookup failed: %s", e)
+        return True
 
     @staticmethod
     def _is_pure_x11_session() -> bool:
