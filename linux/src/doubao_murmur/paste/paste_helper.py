@@ -23,7 +23,12 @@ from doubao_murmur.paste.hyprland_window import (
     active_window_class as hyprland_active_window_class,
 )
 from doubao_murmur.paste.kwin_window import active_window_class as kwin_active_window_class
-from doubao_murmur.paste.uinput_injector import UinputPaster
+from doubao_murmur.paste.uinput_injector import (
+    KEY_LEFTCTRL,
+    KEY_LEFTSHIFT,
+    LETTER_KEYCODES,
+    UinputPaster,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,12 +174,9 @@ class PasteHelper:
 
     @staticmethod
     def _simulate_paste() -> None:
-        """Simulate the paste keystroke for the focused window.
-
-        Terminals use Ctrl+Shift+V; everything else uses Ctrl+V.
-        """
+        """Simulate the paste keystroke for the focused window."""
         PasteHelper._restore_focused_window()
-        use_shift = PasteHelper._focused_window_is_terminal()
+        letter, use_shift = PasteHelper._paste_chord()
 
         # On a pure X11 session, xdotool resolves the logical Control_L
         # keysym through the active XKB map. This matters when users swap
@@ -183,24 +185,28 @@ class PasteHelper:
         # interprets as CapsLock. Do not let that lower-level fallback win on
         # X11 when xdotool can honor the user's logical key mapping.
         if PasteHelper._is_pure_x11_session():
-            if PasteHelper._simulate_paste_with_xdotool(use_shift):
+            if PasteHelper._simulate_paste_with_xdotool(letter, use_shift):
                 return
 
         # Try uinput first: kernel-level injection that works on both
         # Wayland and X11 with no external tools. Gated on /dev/uinput
         # write access (SteamOS grants it; most distros do not by default).
         if UinputPaster.is_available():
-            if UinputPaster.paste(use_shift=use_shift):
+            if UinputPaster.paste(letter, use_shift=use_shift):
                 logger.info("Paste simulated via uinput")
                 return
             logger.warning("uinput paste failed, falling back")
 
         # Try ydotool (works on both Wayland and X11)
-        # Keycodes: 29=LEFTCTRL, 42=LEFTSHIFT, 47=V
+        # Keycodes: 29=LEFTCTRL, 42=LEFTSHIFT; letter code from LETTER_KEYCODES.
+        ctrl, shift = KEY_LEFTCTRL, KEY_LEFTSHIFT
+        letter_code = LETTER_KEYCODES[letter]
         if use_shift:
-            ydotool_keys = ["29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
+            ydotool_keys = [f"{ctrl}:1", f"{shift}:1", f"{letter_code}:1",
+                            f"{letter_code}:0", f"{shift}:0", f"{ctrl}:0"]
         else:
-            ydotool_keys = ["29:1", "47:1", "47:0", "29:0"]
+            ydotool_keys = [f"{ctrl}:1", f"{letter_code}:1",
+                            f"{letter_code}:0", f"{ctrl}:0"]
         for command in command_candidates("ydotool"):
             try:
                 subprocess.run(
@@ -215,10 +221,10 @@ class PasteHelper:
 
         # Try wtype (Wayland virtual keyboard)
         if use_shift:
-            wtype_args = ["-M", "ctrl", "-M", "shift", "-P", "v",
+            wtype_args = ["-M", "ctrl", "-M", "shift", "-P", letter,
                           "-m", "shift", "-m", "ctrl"]
         else:
-            wtype_args = ["-M", "ctrl", "-P", "v", "-m", "ctrl"]
+            wtype_args = ["-M", "ctrl", "-P", letter, "-m", "ctrl"]
         for command in command_candidates("wtype"):
             try:
                 subprocess.run(
@@ -233,7 +239,7 @@ class PasteHelper:
 
         # Try xdotool (X11 only). This is also the final fallback for mixed
         # sessions where the native target may still be an X11 window.
-        if PasteHelper._simulate_paste_with_xdotool(use_shift):
+        if PasteHelper._simulate_paste_with_xdotool(letter, use_shift):
             return
 
         logger.error("No paste simulation method available")
@@ -243,9 +249,9 @@ class PasteHelper:
         )
 
     @staticmethod
-    def _simulate_paste_with_xdotool(use_shift: bool) -> bool:
+    def _simulate_paste_with_xdotool(letter: str, use_shift: bool) -> bool:
         """Try to send the paste shortcut through the active X11 keymap."""
-        xdotool_key = "ctrl+shift+v" if use_shift else "ctrl+v"
+        xdotool_key = "ctrl+shift+" + letter if use_shift else "ctrl+" + letter
         for command in command_candidates("xdotool"):
             try:
                 subprocess.run(
@@ -294,23 +300,32 @@ class PasteHelper:
         )
 
     @staticmethod
-    def _focused_window_is_terminal() -> bool:
-        """Check whether the focused window is a terminal emulator."""
+    def _paste_chord() -> tuple[str, bool]:
+        """Return the paste chord for the focused window as ``(letter, use_shift)``.
+
+        Terminals swallow Ctrl+V (their paste is Ctrl+Shift+V); everything
+        else uses Ctrl+V.
+        """
         wm_classes = PasteHelper._focused_window_classes()
         if not wm_classes:
-            return False
+            return "v", False
         # Wayland resourceClass may be a reverse-DNS app id like
         # "org.kde.konsole"; also match on the last dot-segment.
         candidates = set(wm_classes)
         for c in wm_classes:
             candidates.add(c.rsplit(".", 1)[-1])
-        is_terminal = bool(candidates & _TERMINAL_WM_CLASSES)
+        if candidates & _TERMINAL_WM_CLASSES:
+            chord = "ctrl+shift+v"
+            result = "v", True
+        else:
+            chord = "ctrl+v"
+            result = "v", False
         logger.info(
-            "Focused window class: %s (terminal=%s)",
+            "Focused window class: %s (chord=%s)",
             "/".join(wm_classes),
-            is_terminal,
+            chord,
         )
-        return is_terminal
+        return result
 
     @staticmethod
     def _focused_window_classes() -> list[str]:

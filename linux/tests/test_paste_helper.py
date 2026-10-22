@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from doubao_murmur.paste.paste_helper import PasteHelper
+from doubao_murmur.paste.uinput_injector import UinputPaster
 
 
 @pytest.fixture(autouse=True)
@@ -72,11 +73,15 @@ class TestCopyToClipboard:
 class TestSimulatePaste:
     @pytest.fixture(autouse=True)
     def wayland_session(self, monkeypatch):
-        # Keep the existing backend-priority tests deterministic. The X11
-        # regression below explicitly switches this to a pure X11 session.
+        # Keep the existing backend-priority tests deterministic: default to a
+        # Wayland session and no /dev/uinput, so the ydotool/wtype/xdotool
+        # priorities are exercised regardless of the host's uinput access. The
+        # X11 regression below explicitly switches back to a pure X11 session,
+        # and the remapped-modifier test re-enables uinput.
         PasteHelper.forget_focused_window()
         monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
         monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        monkeypatch.setattr(UinputPaster, "is_available", lambda: False)
         yield
         PasteHelper.forget_focused_window()
 
@@ -84,8 +89,8 @@ class TestSimulatePaste:
         remembered = MagicMock(stdout=b"4242\n")
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
              patch("shutil.which", return_value="/usr/bin/xdotool"), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=True), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", True)), \
              patch("subprocess.run", side_effect=[remembered, MagicMock(),
                                                    MagicMock()]) as mock_run:
             PasteHelper.remember_focused_window()
@@ -102,8 +107,8 @@ class TestSimulatePaste:
     def test_x11_prefers_xdotool_for_remapped_modifier(self):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
              patch("shutil.which", return_value="/usr/bin/xdotool"), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=False), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", False)), \
              patch.object(PasteHelper, "_simulate_paste_with_xdotool",
                           wraps=PasteHelper._simulate_paste_with_xdotool) as mock_xdotool, \
              patch("doubao_murmur.paste.paste_helper.UinputPaster.is_available",
@@ -111,7 +116,7 @@ class TestSimulatePaste:
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
 
-            mock_xdotool.assert_called_once_with(False)
+            mock_xdotool.assert_called_once_with("v", False)
             mock_run.assert_called_once_with(
                 ["xdotool", "key", "ctrl+v"],
                 check=True,
@@ -120,8 +125,8 @@ class TestSimulatePaste:
 
     def test_ydotool_preferred(self):
         with patch("shutil.which", return_value="/usr/bin/ydotool"), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=False), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", False)), \
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
             mock_run.assert_called_once()
@@ -132,8 +137,8 @@ class TestSimulatePaste:
 
     def test_ydotool_terminal_uses_ctrl_shift_v(self):
         with patch("shutil.which", return_value="/usr/bin/ydotool"), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=True), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", True)), \
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
             mock_run.assert_called_once()
@@ -150,8 +155,8 @@ class TestSimulatePaste:
             return None
 
         with patch("shutil.which", side_effect=which_side_effect), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=False), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", False)), \
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
             mock_run.assert_called_once()
@@ -163,8 +168,8 @@ class TestSimulatePaste:
             return None
 
         with patch("shutil.which", side_effect=which_side_effect), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=False), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", False)), \
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
             mock_run.assert_called_once()
@@ -178,13 +183,15 @@ class TestSimulatePaste:
             return None
 
         with patch("shutil.which", side_effect=which_side_effect), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=True), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", True)), \
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
             mock_run.assert_called_once()
             args = mock_run.call_args
-            assert args[0][0] == ["xdotool", "key", "ctrl+shift+v"]
+            assert args[0][0] == [
+                "xdotool", "key", "ctrl+shift+v"
+            ]
 
     def test_flatpak_spawn_host_fallback(self):
         def which_side_effect(cmd):
@@ -194,8 +201,8 @@ class TestSimulatePaste:
 
         with patch("os.path.exists", return_value=True), \
              patch("shutil.which", side_effect=which_side_effect), \
-             patch.object(PasteHelper, "_focused_window_is_terminal",
-                          return_value=False), \
+             patch.object(PasteHelper, "_paste_chord",
+                          return_value=("v", False)), \
              patch("subprocess.run") as mock_run:
             PasteHelper._simulate_paste()
             mock_run.assert_called()
@@ -206,8 +213,11 @@ class TestSimulatePaste:
             ]
 
 
-class TestTerminalDetection:
-    def test_hyprland_kitty_uses_terminal_paste_chord(self):
+class TestPasteChord:
+    def test_hyprland_kitty_uses_terminal_paste_chord(self, monkeypatch):
+        # Hyprland is a Wayland compositor; pin the session so the test does
+        # not exercise the pure-X11 xdotool path on an X11 development host.
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
         with patch(
             "doubao_murmur.paste.paste_helper.hyprland_active_window_class",
             return_value="kitty",
@@ -223,9 +233,9 @@ class TestTerminalDetection:
             PasteHelper._simulate_paste()
 
         kwin_probe.assert_not_called()
-        paste.assert_called_once_with(use_shift=True)
+        paste.assert_called_once_with("v", use_shift=True)
 
-    def _run_detection(self, classname: bytes) -> bool:
+    def _run_chord(self, classname: bytes) -> tuple[str, bool]:
         def which_side_effect(cmd):
             if cmd == "xdotool":
                 return "/usr/bin/xdotool"
@@ -235,7 +245,7 @@ class TestTerminalDetection:
         mock_result.stdout = classname
         with patch("shutil.which", side_effect=which_side_effect), \
              patch("subprocess.run", return_value=mock_result) as mock_run:
-            result = PasteHelper._focused_window_is_terminal()
+            result = PasteHelper._paste_chord()
             args = mock_run.call_args
             assert args[0][0] == [
                 "xdotool", "getactivewindow", "getwindowclassname"
@@ -243,22 +253,22 @@ class TestTerminalDetection:
             return result
 
     def test_konsole_is_terminal(self):
-        assert self._run_detection(b"konsole\n") is True
+        assert self._run_chord(b"konsole\n") == ("v", True)
 
     def test_browser_is_not_terminal(self):
-        assert self._run_detection(b"google-chrome\n") is False
+        assert self._run_chord(b"google-chrome\n") == ("v", False)
 
     def test_case_insensitive(self):
-        assert self._run_detection(b"Alacritty\n") is True
+        assert self._run_chord(b"Alacritty\n") == ("v", True)
 
     def test_warp_is_terminal(self):
         # Warp's WM class is "dev.warp.Warp" (xdotool getwindowclassname).
-        assert self._run_detection(b"dev.warp.Warp\n") is True
+        assert self._run_chord(b"dev.warp.Warp\n") == ("v", True)
 
-    def test_no_xdotool_returns_false(self):
+    def test_no_xdotool_returns_default(self):
         with patch("shutil.which", return_value=None), \
              patch("os.path.exists", return_value=False):
-            assert PasteHelper._focused_window_is_terminal() is False
+            assert PasteHelper._paste_chord() == ("v", False)
 
 
 class TestCopyOnly:
