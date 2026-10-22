@@ -6,7 +6,6 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-import doubao_murmur.paste.paste_helper as paste_helper
 from doubao_murmur.paste.paste_helper import PasteHelper
 from doubao_murmur.paste.uinput_injector import UinputPaster
 from doubao_murmur.config import PASTE_FOCUS_DELAY, X11_SYNC_TIMEOUT
@@ -153,8 +152,6 @@ class TestSimulatePaste:
         ]
 
     def test_simulate_paste_skips_focus_delay_when_window_not_restored(self):
-        mock_sleep = MagicMock()
-
         with (
                 patch.object(
                     PasteHelper,
@@ -182,19 +179,12 @@ class TestSimulatePaste:
                     PasteHelper,
                     "_simulate_paste_with_xdotool",
                     return_value=True,
-                ),
-                patch.object(
-                    paste_helper,
-                    "time",
-                    MagicMock(sleep=mock_sleep),
                 ),
         ):
             PasteHelper._simulate_paste()
             mock_sleep.assert_not_called()
 
     def test_simulate_paste_waits_after_window_restored(self):
-        mock_sleep = MagicMock()
-
         with (
                 patch.object(
                     PasteHelper,
@@ -222,11 +212,6 @@ class TestSimulatePaste:
                     PasteHelper,
                     "_simulate_paste_with_xdotool",
                     return_value=True,
-                ),
-                patch.object(
-                    paste_helper,
-                    "time",
-                    MagicMock(sleep=mock_sleep),
                 ),
         ):
             PasteHelper._simulate_paste()
@@ -236,8 +221,6 @@ class TestSimulatePaste:
         # Hotkey first, then click the window to paste into: the focus is on
         # somebody else's window, so the remembered target must stay untouched
         # and the chord must land where the user clicked.
-        mock_sleep = MagicMock()
-
         with (
                 patch.object(
                     PasteHelper,
@@ -252,6 +235,9 @@ class TestSimulatePaste:
                     "doubao_murmur.paste.paste_helper.is_pure_x11_session",
                     return_value=True,
                 ),
+                patch(
+                    "doubao_murmur.paste.paste_helper.time.sleep"
+                ) as mock_sleep,
                 patch.object(
                     PasteHelper,
                     "_paste_chord",
@@ -262,11 +248,6 @@ class TestSimulatePaste:
                     "_simulate_paste_with_xdotool",
                     return_value=True,
                 ) as mock_xdotool,
-                patch.object(
-                    paste_helper,
-                    "time",
-                    MagicMock(sleep=mock_sleep),
-                ),
         ):
             PasteHelper._simulate_paste()
 
