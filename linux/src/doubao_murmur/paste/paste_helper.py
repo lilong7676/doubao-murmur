@@ -306,7 +306,7 @@ class PasteHelper:
                     check=True,
                     timeout=X11_SYNC_TIMEOUT,
                 )
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError) as e:
                 logger.warning("windowactivate was not confirmed: %s", e)
             # windowactivate raises and focuses the frame, but Electron apps
             # can leave input focus on the overlay; an explicit focus call
@@ -320,7 +320,7 @@ class PasteHelper:
                 )
                 logger.info("Restored X11 paste target: %s", window_id)
                 return True
-            except Exception as e:
+            except (OSError, subprocess.SubprocessError) as e:
                 logger.warning("Could not restore X11 paste target: %s", e)
         return False
 
