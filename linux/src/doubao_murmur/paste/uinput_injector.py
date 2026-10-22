@@ -103,12 +103,12 @@ class UinputPaster:
                 keys_down.append(KEY_LEFTSHIFT)
             keys_down.append(key)
 
-            for key in keys_down:
-                UinputPaster._emit(fd, EV_KEY, key, 1)
+            for k in keys_down:
+                UinputPaster._emit(fd, EV_KEY, k, 1)
                 UinputPaster._emit(fd, EV_SYN, SYN_REPORT, 0)
                 time.sleep(0.02)
-            for key in reversed(keys_down):
-                UinputPaster._emit(fd, EV_KEY, key, 0)
+            for k in reversed(keys_down):
+                UinputPaster._emit(fd, EV_KEY, k, 0)
                 UinputPaster._emit(fd, EV_SYN, SYN_REPORT, 0)
                 time.sleep(0.02)
 
