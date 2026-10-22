@@ -25,6 +25,7 @@ from doubao_murmur.config import (
     OVERLAY_WIDTH,
     get_overlay_config_path,
 )
+from doubao_murmur.session import is_pure_x11_session
 from doubao_murmur.ui.windowing import (
     OverlayRole,
     apply_overlay_window_hints,
@@ -79,8 +80,13 @@ class Overlay:
         self._window.set_decorated(False)
         self._window.set_default_size(OVERLAY_WIDTH, OVERLAY_HEIGHT)
         self._window.set_resizable(False)
-        self._window.set_can_focus(False)
-        self._window.set_focusable(False)
+        # On a pure X11 session the overlay must not take input focus, or it
+        # steals it from the window the user pastes into. Wayland needs no
+        # such lock: layer-shell's KeyboardMode.ON_DEMAND already governs
+        # focus, and disabling focusability there would also starve the
+        # EventControllerKey below, killing the overlay's own Esc cancel.
+        if is_pure_x11_session():
+            self._window.set_focusable(False)
         self._window.add_css_class("overlay-window")
         apply_overlay_window_hints(self._window, OverlayRole.STATUS)
 
