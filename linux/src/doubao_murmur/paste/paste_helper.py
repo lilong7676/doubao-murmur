@@ -2,12 +2,17 @@
 
 Mirrors PasteHelper.swift.
 
-Methods (in priority order):
-1. wl-copy (Wayland clipboard) + uinput (kernel-level paste simulation)
-2. On a pure X11 session, xdotool (X11 paste simulation)
-3. ydotool/wtype (paste simulation)
-4. xclip/xsel (X11 clipboard) + the remaining paste backends
-5. GTK clipboard API as last resort
+Clipboard backends, in priority order:
+1. wl-copy (Wayland)
+2. xclip, then xsel (X11)
+3. GTK clipboard API (last resort)
+
+Paste-simulation backends, first one that works wins:
+1. xdotool on a pure X11 session (honors the user's XKB mapping)
+2. uinput (kernel-level; needs write access to /dev/uinput)
+3. ydotool
+4. wtype
+5. xdotool, as the last resort for X11 targets in a mixed session
 """
 
 from __future__ import annotations
