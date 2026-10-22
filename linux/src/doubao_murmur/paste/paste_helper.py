@@ -34,6 +34,7 @@ from doubao_murmur.paste.uinput_injector import (
     LETTER_KEYCODES,
     UinputPaster,
 )
+from doubao_murmur.session import is_pure_x11_session
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class PasteHelper:
         Doubao Murmur itself.
         """
         PasteHelper._x11_target_window = None
-        if not PasteHelper._is_pure_x11_session():
+        if not is_pure_x11_session():
             return
         for command in command_candidates("xdotool"):
             try:
@@ -123,7 +124,7 @@ class PasteHelper:
         """Copy text to system clipboard."""
         # Try Wayland first, except in a known pure-X11 session where wl-copy
         # can only emit connection errors and delay the real xclip path.
-        if not PasteHelper._is_pure_x11_session():
+        if not is_pure_x11_session():
             for command in command_candidates("wl-copy"):
                 try:
                     subprocess.run(
@@ -197,7 +198,7 @@ class PasteHelper:
         # uinput/ydotool is the physical left-Ctrl position, which XKB then
         # interprets as CapsLock. Do not let that lower-level fallback win on
         # X11 when xdotool can honor the user's logical key mapping.
-        if PasteHelper._is_pure_x11_session():
+        if is_pure_x11_session():
             if PasteHelper._simulate_paste_with_xdotool(letter, use_shift):
                 return
 
@@ -287,7 +288,7 @@ class PasteHelper:
     def _restore_focused_window() -> bool:
         """Reactivate the X11 window captured before the overlay appeared."""
         window_id = PasteHelper._x11_target_window
-        if not window_id or not PasteHelper._is_pure_x11_session():
+        if not window_id or not is_pure_x11_session():
             return False
         for command in command_candidates("xdotool"):
             # xdotool sends the activation request before it starts polling the
@@ -336,7 +337,7 @@ class PasteHelper:
         Unreadable values count as "ours" so a broken probe falls back to the
         unconditional restore instead of silently disabling auto-paste.
         """
-        if not PasteHelper._is_pure_x11_session():
+        if not is_pure_x11_session():
             return False
         for command in command_candidates("xdotool"):
             try:
@@ -353,21 +354,6 @@ class PasteHelper:
             except Exception as e:
                 logger.debug("Active window pid lookup failed: %s", e)
         return True
-
-    @staticmethod
-    def _is_pure_x11_session() -> bool:
-        """Whether X11 is the session protocol rather than XWayland."""
-        session_type = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
-        if session_type == "x11":
-            return True
-        if session_type == "wayland":
-            return False
-        # Some launchers do not set XDG_SESSION_TYPE. Having only DISPLAY is
-        # the usual X11 fallback; Wayland sessions normally also expose
-        # WAYLAND_DISPLAY.
-        return bool(os.environ.get("DISPLAY")) and not os.environ.get(
-            "WAYLAND_DISPLAY"
-        )
 
     @staticmethod
     def _paste_chord() -> tuple[str, bool]:

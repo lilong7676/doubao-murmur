@@ -166,9 +166,8 @@ class TestSimulatePaste:
                     "_restore_focused_window",
                     return_value=False,
                 ),
-                patch.object(
-                    PasteHelper,
-                    "_is_pure_x11_session",
+                patch(
+                    "doubao_murmur.paste.paste_helper.is_pure_x11_session",
                     return_value=True,
                 ),
                 patch(
@@ -207,9 +206,8 @@ class TestSimulatePaste:
                     "_restore_focused_window",
                     return_value=True,
                 ),
-                patch.object(
-                    PasteHelper,
-                    "_is_pure_x11_session",
+                patch(
+                    "doubao_murmur.paste.paste_helper.is_pure_x11_session",
                     return_value=True,
                 ),
                 patch(
@@ -250,9 +248,8 @@ class TestSimulatePaste:
                     PasteHelper,
                     "_restore_focused_window",
                 ) as mock_restore,
-                patch.object(
-                    PasteHelper,
-                    "_is_pure_x11_session",
+                patch(
+                    "doubao_murmur.paste.paste_helper.is_pure_x11_session",
                     return_value=True,
                 ),
                 patch.object(
