@@ -286,16 +286,23 @@ class PasteHelper:
         if not window_id or not PasteHelper._is_pure_x11_session():
             return False
         for command in command_candidates("xdotool"):
+            # xdotool sends the activation request before it starts polling the
+            # --sync wait, so a timeout means we stopped waiting, not that the
+            # request never went out. Keep going either way: the explicit focus
+            # below is exactly what the stalled case needs.
             try:
                 subprocess.run(
                     command + ["windowactivate", "--sync", window_id],
                     check=True,
                     timeout=X11_SYNC_TIMEOUT,
                 )
-                # windowactivate raises and focuses the frame, but Electron
-                # apps can leave input focus on the overlay; an explicit focus
-                # call targets the editor widget. Best-effort: some windows
-                # reject windowfocus, which must not abort the paste.
+            except Exception as e:
+                logger.warning("windowactivate was not confirmed: %s", e)
+            # windowactivate raises and focuses the frame, but Electron apps
+            # can leave input focus on the overlay; an explicit focus call
+            # targets the editor widget. Best-effort: some windows reject
+            # windowfocus, which must not abort the paste.
+            try:
                 subprocess.run(
                     command + ["windowfocus", "--sync", window_id],
                     check=False,

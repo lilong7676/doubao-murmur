@@ -110,6 +110,45 @@ class TestSimulatePaste:
                 "xdotool", "key", "--delay", "50", "ctrl+shift+v"
             ]
 
+    def test_restores_focus_when_activation_times_out(self):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append((command, kwargs))
+            if "windowactivate" in command:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return MagicMock()
+
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
+             patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch("subprocess.run", side_effect=fake_run):
+            PasteHelper._x11_target_window = "4242"
+            assert PasteHelper._restore_focused_window() is True
+
+        assert [c for c, _ in commands] == [
+            ["xdotool", "windowactivate", "--sync", "4242"],
+            ["xdotool", "windowfocus", "--sync", "4242"],
+        ]
+        assert commands[1][1]["timeout"] == X11_SYNC_TIMEOUT
+
+    def test_gives_up_when_explicit_focus_times_out_too(self):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}), \
+             patch("shutil.which", return_value="/usr/bin/xdotool"), \
+             patch("subprocess.run", side_effect=fake_run):
+            PasteHelper._x11_target_window = "4242"
+            assert PasteHelper._restore_focused_window() is False
+
+        assert commands == [
+            ["xdotool", "windowactivate", "--sync", "4242"],
+            ["xdotool", "windowfocus", "--sync", "4242"],
+        ]
+
     def test_simulate_paste_skips_focus_delay_when_window_not_restored(self):
         mock_sleep = MagicMock()
 
