@@ -25,6 +25,22 @@
   <url type="homepage">https://github.com/lilong7676/doubao-murmur</url>
   <developer_name>lilong7676</developer_name>
   <releases>
+    <release version="1.5.2-beta.2" date="2026-10-27" type="development">
+      <description>
+        <p>Fixes auto-paste into terminals on Hyprland, which printed a literal
+           "v" instead of the transcription. Terminal detection only asked KWin
+           and xdotool, neither of which can see native Wayland windows there,
+           so every terminal got Ctrl+V; it now asks hyprctl first. The overlay
+           also follows the focused monitor on Hyprland instead of always
+           opening on the first one.</p>
+        <p>Makes auto-paste reliable on plain X11 sessions. The paste keystroke
+           now goes through xdotool so it honors a remapped Ctrl (such as
+           ctrl:swapcaps, which used to send CapsLock+V), the window that had
+           focus before recording is re-activated before pasting so the
+           keystroke no longer lands on the overlay, and Electron apps such as
+           VS Code now accept the synthetic Ctrl+V.</p>
+      </description>
+    </release>
     <release version="1.5.1" date="2026-08-13">
       <description>
         <p>Keeps the last word or two of a transcription that used to go missing
