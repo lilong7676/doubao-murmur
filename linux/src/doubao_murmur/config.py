@@ -37,7 +37,11 @@ AUDIO_BLOCKSIZE = 4096  # samples per callback (~256ms at 16kHz)
 
 # --- Auth error detection ---
 
-AUTH_ERROR_CODE = 709599054
+# 709599054: "Invalid". 710012001: "login invalid", the HTTP 200 body that
+# answers the handshake when the cookie is not a login at all. 710022013:
+# "tourist reach limited", sometimes sent once right before the server closes
+# a connection whose login has expired.
+AUTH_ERROR_CODES = frozenset({709599054, 710012001, 710022013})
 AUTH_ERROR_KEYWORDS = [
     "cookie", "auth", "login", "session", "unauthorized", "expired",
 ]

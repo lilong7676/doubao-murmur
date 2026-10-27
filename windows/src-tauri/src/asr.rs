@@ -9,6 +9,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::config;
@@ -71,6 +73,7 @@ impl AsrClient {
         let (ctl_tx, ctl_rx) = unbounded_channel::<Ctl>();
         self.ctl_tx = Some(ctl_tx);
 
+        let url = build_url(&params, &uuid::Uuid::new_v4().to_string());
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -82,7 +85,7 @@ impl AsrClient {
                     return;
                 }
             };
-            runtime.block_on(run(params, audio_rx, ctl_rx, emit));
+            runtime.block_on(run(url, params, audio_rx, ctl_rx, emit));
         });
     }
 
@@ -145,13 +148,12 @@ fn percent_encode(value: &str) -> String {
 }
 
 async fn run<F: Fn(AsrEvent)>(
+    url: String,
     params: AsrParams,
     mut audio_rx: UnboundedReceiver<Vec<u8>>,
     mut ctl_rx: UnboundedReceiver<Ctl>,
     emit: F,
 ) {
-    let url = build_url(&params, &uuid::Uuid::new_v4().to_string());
-
     let request = match make_request(&url, &params) {
         Ok(request) => request,
         Err(e) => {
@@ -169,6 +171,11 @@ async fn run<F: Fn(AsrEvent)>(
     .await
     {
         Ok(Ok((socket, _response))) => socket,
+        Ok(Err(e)) if is_handshake_auth_rejection(&e) => {
+            log_warn!("Handshake rejected: login invalid");
+            emit(AsrEvent::AuthError);
+            return;
+        }
         Ok(Err(e)) => {
             log_error!("WebSocket connect failed: {e}");
             emit(AsrEvent::Error(e.to_string()));
@@ -187,6 +194,7 @@ async fn run<F: Fn(AsrEvent)>(
 
     let mut sending = true;
     let mut closed_by_us = false;
+    let mut received_any = false;
 
     loop {
         tokio::select! {
@@ -224,12 +232,14 @@ async fn run<F: Fn(AsrEvent)>(
 
             incoming = read.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
+                    received_any = true;
                     if handle_message(&text, &emit) {
                         closed_by_us = true;
                         break;
                     }
                 }
                 Some(Ok(Message::Binary(bytes))) => {
+                    received_any = true;
                     let text = String::from_utf8_lossy(&bytes).into_owned();
                     if handle_message(&text, &emit) {
                         closed_by_us = true;
@@ -238,6 +248,11 @@ async fn run<F: Fn(AsrEvent)>(
                 }
                 Some(Ok(Message::Close(frame))) => {
                     log_info!("Server closed the socket: {frame:?}");
+                    if is_silent_rejection(received_any, frame.as_ref()) {
+                        log_warn!("Server closed the connection before sending anything: login expired");
+                        emit(AsrEvent::AuthError);
+                        closed_by_us = true;
+                    }
                     break;
                 }
                 Some(Ok(_)) => {}
@@ -318,13 +333,39 @@ fn handle_message(text: &str, emit: &dyn Fn(AsrEvent)) -> bool {
 }
 
 pub fn is_auth_error(code: i64, message: &str) -> bool {
-    if code == config::AUTH_ERROR_CODE {
+    if config::AUTH_ERROR_CODES.contains(&code) {
         return true;
     }
     let lower = message.to_lowercase();
     config::AUTH_ERROR_KEYWORDS
         .iter()
         .any(|keyword| lower.contains(keyword))
+}
+
+/// An expired login passes the handshake and is then closed by the server
+/// (1000) before it sends anything. A valid login gets a result for every audio
+/// frame long before the server ends the session, which it also does with 1000.
+fn is_silent_rejection(received_any: bool, frame: Option<&CloseFrame<'_>>) -> bool {
+    !received_any && matches!(frame, Some(frame) if frame.code == CloseCode::Normal)
+}
+
+/// The endpoint answers a cookie that is not a login at all with HTTP 200 and
+/// `{"code":710012001,"message":"login invalid"}` instead of upgrading. A bare
+/// 401/403 is left alone: it may come from a proxy.
+fn is_handshake_auth_rejection(error: &tokio_tungstenite::tungstenite::Error) -> bool {
+    let tokio_tungstenite::tungstenite::Error::Http(response) = error else {
+        return false;
+    };
+    let Some(Ok(value)) = response
+        .body()
+        .as_deref()
+        .map(serde_json::from_slice::<serde_json::Value>)
+    else {
+        return false;
+    };
+    let code = value.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+    let message = value.get("message").and_then(|m| m.as_str()).unwrap_or("");
+    code != 0 && is_auth_error(code, message)
 }
 
 #[cfg(test)]
@@ -352,6 +393,129 @@ mod tests {
         let emit = |event: AsrEvent| seen.lock().unwrap().push(event.error_recovery());
         assert!(handle_message(r#"{"code":709599054,"message":"invalid"}"#, &emit));
         assert_eq!(*seen.lock().unwrap(), vec![Some(ErrorRecovery::Reauthenticate)]);
+    }
+
+    #[test]
+    fn tourist_limit_requires_login() {
+        // Sent once right before the server drops an expired login.
+        let seen = std::sync::Mutex::new(Vec::new());
+        let emit = |event: AsrEvent| seen.lock().unwrap().push(event.error_recovery());
+        assert!(handle_message(
+            r#"{"event":"","result":null,"code":710022013,"message":"tourist reach limited"}"#,
+            &emit
+        ));
+        assert_eq!(*seen.lock().unwrap(), vec![Some(ErrorRecovery::Reauthenticate)]);
+    }
+
+    #[test]
+    fn only_a_normal_close_before_any_message_is_a_silent_rejection() {
+        let normal = CloseFrame { code: CloseCode::Normal, reason: "1000-".into() };
+        let failed = CloseFrame { code: CloseCode::Error, reason: "".into() };
+        assert!(is_silent_rejection(false, Some(&normal)));
+        assert!(!is_silent_rejection(true, Some(&normal)));
+        assert!(!is_silent_rejection(false, Some(&failed)));
+        assert!(!is_silent_rejection(false, None));
+    }
+
+    fn http_error(status: u16, body: Option<&str>) -> tokio_tungstenite::tungstenite::Error {
+        let response = tokio_tungstenite::tungstenite::http::Response::builder()
+            .status(status)
+            .body(body.map(|body| body.as_bytes().to_vec()))
+            .unwrap();
+        tokio_tungstenite::tungstenite::Error::Http(response)
+    }
+
+    #[test]
+    fn login_invalid_handshake_is_an_auth_rejection() {
+        let body = r#"{"code":710012001,"msg":"登录已过期，请重新登录","message":"login invalid"}"#;
+        assert!(is_handshake_auth_rejection(&http_error(200, Some(body))));
+    }
+
+    #[test]
+    fn other_handshake_failures_are_not_auth_rejections() {
+        assert!(!is_handshake_auth_rejection(&http_error(403, None)));
+        assert!(!is_handshake_auth_rejection(&http_error(200, Some(r#"{"code":1,"message":"busy"}"#))));
+        assert!(!is_handshake_auth_rejection(&http_error(200, Some("<html>portal</html>"))));
+        assert!(!is_handshake_auth_rejection(&tokio_tungstenite::tungstenite::Error::ConnectionClosed));
+    }
+
+    /// Runs one session against a local server and returns what it emitted.
+    fn run_against(
+        disconnect_first: bool,
+        server: impl FnOnce(std::net::TcpStream) + Send + 'static,
+    ) -> Vec<String> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || server(listener.accept().unwrap().0));
+
+        let (_audio_tx, audio_rx) = unbounded_channel::<Vec<u8>>();
+        let (ctl_tx, ctl_rx) = unbounded_channel::<Ctl>();
+        if disconnect_first {
+            ctl_tx.send(Ctl::Disconnect).unwrap();
+        }
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run(url, sample_params(), audio_rx, ctl_rx, move |event| {
+                sink.lock().unwrap().push(format!("{event:?}"))
+            }));
+        server.join().unwrap();
+        let events = seen.lock().unwrap().clone();
+        events
+    }
+
+    fn close_normally(ws: &mut tokio_tungstenite::tungstenite::WebSocket<std::net::TcpStream>) {
+        let frame = CloseFrame { code: CloseCode::Normal, reason: "1000-".into() };
+        ws.close(Some(frame)).unwrap();
+        while ws.read().is_ok() {}
+    }
+
+    #[test]
+    fn server_closing_before_any_message_requires_login() {
+        let events = run_against(false, |stream| {
+            close_normally(&mut tokio_tungstenite::tungstenite::accept(stream).unwrap());
+        });
+        assert_eq!(events, ["Opened", "AuthError"]);
+    }
+
+    #[test]
+    fn server_closing_after_results_keeps_credentials() {
+        // The server also ends long valid sessions with 1000 "1000-".
+        let events = run_against(false, |stream| {
+            let mut ws = tokio_tungstenite::tungstenite::accept(stream).unwrap();
+            ws.send(Message::Text(r#"{"code":0,"event":"result","result":{"Text":"你好"}}"#.into()))
+                .unwrap();
+            close_normally(&mut ws);
+        });
+        assert_eq!(events, ["Opened", r#"Result("你好")"#, r#"Error("连接已关闭")"#]);
+    }
+
+    #[test]
+    fn our_own_disconnect_reports_nothing() {
+        let events = run_against(true, |stream| {
+            let mut ws = tokio_tungstenite::tungstenite::accept(stream).unwrap();
+            while ws.read().is_ok() {}
+        });
+        assert_eq!(events, ["Opened"]);
+    }
+
+    #[test]
+    fn login_invalid_handshake_requires_login() {
+        let events = run_against(false, |mut stream| {
+            use std::io::{Read, Write};
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let body = r#"{"code":710012001,"message":"login invalid"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        assert_eq!(events, ["AuthError"]);
     }
 
     #[test]
@@ -408,7 +572,9 @@ mod tests {
 
     #[test]
     fn auth_errors_are_recognised() {
-        assert!(is_auth_error(config::AUTH_ERROR_CODE, ""));
+        for code in config::AUTH_ERROR_CODES {
+            assert!(is_auth_error(*code, ""));
+        }
         assert!(is_auth_error(1, "Cookie is invalid"));
         assert!(is_auth_error(2, "AUTH failed"));
         assert!(is_auth_error(3, "session expired"));

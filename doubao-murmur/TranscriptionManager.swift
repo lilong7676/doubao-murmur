@@ -21,9 +21,6 @@ class TranscriptionManager {
     private let asrClient = DoubaoASRClient()
     private let audioCapture = AudioCaptureManager()
 
-    /// Whether the current WSS connection is using cached (file-based) params.
-    private var usingCachedParams = false
-
     /// True after stopRecording(): incoming results are the tail of the utterance
     /// and completion is deferred until the stream falls quiet.
     private var awaitingFinalResult = false
@@ -103,12 +100,9 @@ class TranscriptionManager {
                 guard self.appState.recordingState != .idle else { return }
                 print("[TranscriptionManager] ASR error: \(error?.localizedDescription ?? "unknown")")
 
-                // If we used cached params and got a connection error, it might be auth-related
-                if self.usingCachedParams {
-                    self.handleAuthFailure()
-                    return
-                }
-
+                // Keep the login: an expired one is reported through onAuthError.
+                // Any connection error used to clear cached params, so a network
+                // hiccup or the server ending a long session forced a re-login.
                 self.appState.errorMessage = "连接出错"
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                     self?.resetToIdle()
@@ -180,7 +174,6 @@ class TranscriptionManager {
             // 1. Try cached params from local config file first
             if let cachedParams = ASRParamsStore.load() {
                 print("[TranscriptionManager] Using cached ASR params")
-                self.usingCachedParams = true
                 self.asrClient.connect(params: cachedParams)
                 return
             }
@@ -196,7 +189,6 @@ class TranscriptionManager {
                 }
                 // Save for future use
                 ASRParamsStore.save(params)
-                self.usingCachedParams = false
                 self.asrClient.connect(params: params)
                 return
             }
@@ -250,7 +242,6 @@ class TranscriptionManager {
     private func handleAuthFailure() {
         print("[TranscriptionManager] ⚠️ Auth failure detected, clearing cached params")
         ASRParamsStore.clear()
-        usingCachedParams = false
         audioCapture.stopCapture()
         asrClient.disconnect()
         resetToIdle()
@@ -299,7 +290,6 @@ class TranscriptionManager {
         appState.showOverlay = false
         appState.errorMessage = nil
         overlayPanel.hideOverlay()
-        usingCachedParams = false
 
         // Clear transcription text after a short delay (so paste can complete)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in

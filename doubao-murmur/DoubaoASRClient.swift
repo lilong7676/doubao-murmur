@@ -39,6 +39,9 @@ class DoubaoASRClient {
     private static let sampleRate = 16000
     /// Granularity of the trailing silence padding sent by `finishSending`.
     private static let silenceChunkMs = 100
+    /// 709599054: "Invalid". 710012001: "login invalid". 710022013: "tourist reach
+    /// limited", sometimes sent right before the server closes an expired login.
+    private static let authErrorCodes: Set<Int> = [709599054, 710012001, 710022013]
 
     private var webSocketTask: URLSessionWebSocketTask?
     private(set) var isConnected = false
@@ -94,12 +97,20 @@ class DoubaoASRClient {
         self.webSocketTask = task
         task.resume()
 
-        receiveMessage()
+        receiveMessage(on: task, receivedAnyMessage: false)
 
         // Verify connection is alive
         task.sendPing { [weak self] error in
-            guard let self = self else { return }
+            guard let self = self, task === self.webSocketTask else { return }
             if let error = error {
+                // A connection that opened and was then closed is reported by the
+                // receive loop, which knows whether anything arrived first.
+                guard task.closeCode == .invalid else { return }
+                if Self.isHandshakeAuthRejection(task) {
+                    print("[DoubaoASRClient] ⚠️ Handshake rejected: login invalid")
+                    self.onAuthError?()
+                    return
+                }
                 print("[DoubaoASRClient] ❌ Connection failed: \(error.localizedDescription)")
                 self.onError?(error)
             } else {
@@ -164,13 +175,14 @@ class DoubaoASRClient {
     }
 
     func disconnect() {
-        guard webSocketTask != nil else { return }
+        guard let task = webSocketTask else { return }
+        // Clear first so the receive loop can tell this close from the server's.
+        webSocketTask = nil
         isConnected = false
         bufferLock.lock()
         pendingAudioBuffer.removeAll()
         bufferLock.unlock()
-        webSocketTask?.cancel(with: .normalClosure, reason: "1000-".data(using: .utf8))
-        webSocketTask = nil
+        task.cancel(with: .normalClosure, reason: "1000-".data(using: .utf8))
         print("[DoubaoASRClient] Disconnected")
     }
 
@@ -194,8 +206,10 @@ class DoubaoASRClient {
 
     // MARK: - Receive Loop
 
-    private func receiveMessage() {
-        webSocketTask?.receive { [weak self] result in
+    /// Bound to one task, so a superseded connection or one we closed ourselves
+    /// cannot report into the current recording.
+    private func receiveMessage(on task: URLSessionWebSocketTask, receivedAnyMessage: Bool) {
+        task.receive { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let message):
@@ -209,16 +223,38 @@ class DoubaoASRClient {
                 @unknown default:
                     break
                 }
-                self.receiveMessage()
+                self.receiveMessage(on: task, receivedAnyMessage: true)
 
             case .failure(let error):
-                if self.isConnected {
+                guard task === self.webSocketTask else { return }
+                if !receivedAnyMessage && task.closeCode == .normalClosure {
+                    // An expired login passes the handshake and is then closed by
+                    // the server before it sends anything. A valid login gets a
+                    // result for every audio frame long before the server ends the
+                    // session. This must not depend on isConnected: the ping that
+                    // sets it never completes on such a connection.
+                    print("[DoubaoASRClient] ⚠️ Server closed the connection before sending anything: login expired")
+                    self.isConnected = false
+                    self.onAuthError?()
+                } else if self.isConnected || (!receivedAnyMessage && task.closeCode != .invalid) {
+                    // The second case is any other server close before the ping
+                    // completed; a failed handshake (no close code) is reported
+                    // by the ping instead.
                     print("[DoubaoASRClient] ❌ Receive error: \(error.localizedDescription)")
                     self.isConnected = false
                     self.onError?(error)
                 }
             }
         }
+    }
+
+    /// The handshake was answered with a plain HTTP response instead of an upgrade.
+    /// The endpoint answers a cookie that is not a login at all with HTTP 200 and
+    /// {"code":710012001,"message":"login invalid"}; URLSession does not expose
+    /// that body, so the status has to do.
+    private static func isHandshakeAuthRejection(_ task: URLSessionTask) -> Bool {
+        guard let response = task.response as? HTTPURLResponse else { return false }
+        return [200, 401, 403].contains(response.statusCode)
     }
 
     private func handleMessage(_ text: String) {
@@ -232,8 +268,7 @@ class DoubaoASRClient {
         // Detect auth/cookie errors (non-zero code with auth-related message)
         if code != 0 {
             let lowerMsg = message.lowercased()
-            // 709599054 = "Invalid" per spec; also check for cookie/auth keywords
-            if code == 709599054
+            if Self.authErrorCodes.contains(code)
                 || lowerMsg.contains("cookie")
                 || lowerMsg.contains("auth")
                 || lowerMsg.contains("login")
