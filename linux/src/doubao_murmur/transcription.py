@@ -15,7 +15,7 @@ import logging
 from gi.repository import GLib
 
 from doubao_murmur.app_state import AppState, LoginStatus, RecordingState
-from doubao_murmur.asr_client import ASRClient
+from doubao_murmur.asr_client import ASRClient, is_handshake_auth_rejection
 from doubao_murmur.audio_capture import AudioCapture
 from doubao_murmur.config import (
     AUTH_EXPIRY_DELAY,
@@ -25,21 +25,6 @@ from doubao_murmur.config import (
 from doubao_murmur.params_store import ASRParams, ParamsStore
 
 logger = logging.getLogger(__name__)
-
-
-def _is_http_auth_rejection(error) -> bool:
-    """True if the WebSocket handshake was rejected with HTTP 401/403.
-
-    Covers both websockets>=13 (InvalidStatus with .response.status_code)
-    and older releases (InvalidStatusCode with .status_code). Anything
-    else -- timeouts, DNS failures, connection resets -- is a network
-    problem, not an auth problem.
-    """
-    status = getattr(error, "status_code", None)
-    if status is None:
-        response = getattr(error, "response", None)
-        status = getattr(response, "status_code", None)
-    return status in (401, 403)
 
 
 class TranscriptionManager:
@@ -210,12 +195,12 @@ class TranscriptionManager:
             return GLib.SOURCE_REMOVE
         logger.error("ASR error: %s", error)
         # Only treat the error as an auth problem when the server actively
-        # rejected the handshake (HTTP 401/403). Network failures (timeouts,
+        # rejected the handshake over the login. Network failures (timeouts,
         # DNS, resets) used to be lumped in here, which cleared perfectly
         # valid cached credentials and forced a re-login after every
-        # transient connectivity hiccup. Real in-band auth errors arrive
-        # via _on_auth_error instead.
-        if self.using_cached_params and _is_http_auth_rejection(error):
+        # transient connectivity hiccup. In-band auth errors and the silent
+        # close of an expired login arrive via _on_auth_error instead.
+        if self.using_cached_params and is_handshake_auth_rejection(error):
             self._handle_auth_failure()
             return GLib.SOURCE_REMOVE
         self.app_state.error_message = "连接出错"

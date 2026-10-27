@@ -32,7 +32,11 @@ pub const FIXED_QUERY_PARAMS: &[(&str, &str)] = &[
 
 // --- Auth error detection ---
 
-pub const AUTH_ERROR_CODE: i64 = 709_599_054;
+/// 709599054: "Invalid". 710012001: "login invalid", the HTTP 200 body that
+/// answers the handshake when the cookie is not a login at all. 710022013:
+/// "tourist reach limited", sometimes sent once right before the server closes
+/// a connection whose login has expired.
+pub const AUTH_ERROR_CODES: &[i64] = &[709_599_054, 710_012_001, 710_022_013];
 pub const AUTH_ERROR_KEYWORDS: &[&str] = &[
     "cookie",
     "auth",

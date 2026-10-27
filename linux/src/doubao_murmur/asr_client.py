@@ -25,7 +25,7 @@ from urllib.parse import urlencode
 
 from doubao_murmur.config import (
     AUDIO_SAMPLE_RATE,
-    AUTH_ERROR_CODE,
+    AUTH_ERROR_CODES,
     AUTH_ERROR_KEYWORDS,
     FIXED_QUERY_PARAMS,
     ORIGIN,
@@ -114,8 +114,28 @@ class ASRClient:
                     self.on_open()
 
                 # Receive loop
+                received_any = False
                 async for message in ws:
+                    received_any = True
                     self._handle_message(message)
+
+                # An expired login passes the handshake and is then closed by
+                # the server (1000) before it sends anything. A valid login
+                # gets a result for every audio frame long before the server
+                # ends the session, and disconnect() clears self._ws before
+                # closing, so our own closes never land here.
+                if (
+                    not received_any
+                    and self._ws is ws
+                    and getattr(ws, "close_code", None) == 1000
+                ):
+                    logger.warning(
+                        "Server closed the connection before sending "
+                        "anything: login expired"
+                    )
+                    self._connected = False
+                    if self.on_auth_error:
+                        self.on_auth_error()
             finally:
                 await ws.close()
 
@@ -186,11 +206,10 @@ class ASRClient:
         self._connected = False
         with self._lock:
             self._pending_audio.clear()
-        if self._ws and self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                self._ws.close(1000, "1000-"), self._loop
-            )
-        self._ws = None
+        # Clear first so the receive loop can tell this close from the server's.
+        ws, self._ws = self._ws, None
+        if ws and self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(ws.close(1000, "1000-"), self._loop)
         logger.info("Disconnected")
 
     def _flush_audio_buffer(self) -> None:
@@ -220,18 +239,12 @@ class ASRClient:
         msg = data.get("message", "")
 
         # Detect auth errors
-        if code != 0:
-            lower_msg = msg.lower()
-            if code == AUTH_ERROR_CODE or any(
-                kw in lower_msg for kw in AUTH_ERROR_KEYWORDS
-            ):
-                logger.warning(
-                    "Auth error detected: code=%d, message=%s", code, msg
-                )
-                self._connected = False
-                if self.on_auth_error:
-                    self.on_auth_error()
-                return
+        if code != 0 and _is_auth_error(code, msg):
+            logger.warning("Auth error detected: code=%s, message=%s", code, msg)
+            self._connected = False
+            if self.on_auth_error:
+                self.on_auth_error()
+            return
 
         if event == "result":
             result = data.get("result") or {}
@@ -268,3 +281,40 @@ def _websocket_header_kwargs(connect_func, headers: dict[str, str]) -> dict:
 
 def _is_connection_closed_error(error: Exception) -> bool:
     return error.__class__.__name__.startswith("ConnectionClosed")
+
+
+def _is_auth_error(code, message) -> bool:
+    lower_msg = str(message or "").lower()
+    return code in AUTH_ERROR_CODES or any(
+        kw in lower_msg for kw in AUTH_ERROR_KEYWORDS
+    )
+
+
+def is_handshake_auth_rejection(error) -> bool:
+    """True if the server refused the WebSocket handshake over the login.
+
+    A plain HTTP 401/403 counts. The ASR endpoint itself answers a cookie that
+    is not a login at all with HTTP 200 and a JSON body such as
+    {"code": 710012001, "message": "login invalid"}. websockets>=14 raises
+    InvalidStatus, whose .response carries that body; older releases raise
+    InvalidStatusCode with only .status_code, so there the 200 case goes
+    undetected. Anything else -- timeouts, DNS failures, connection resets --
+    is a network problem, not an auth problem.
+    """
+    response = getattr(error, "response", None)
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(response, "status_code", None)
+    if status in (401, 403):
+        return True
+    body = getattr(response, "body", None)
+    if status is None or not body:
+        return False
+    try:
+        data = json.loads(body)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    code = data.get("code", 0)
+    return code != 0 and _is_auth_error(code, data.get("message"))

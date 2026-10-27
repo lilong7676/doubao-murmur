@@ -9,7 +9,7 @@ from doubao_murmur.config import (
     AUDIO_BLOCKSIZE,
     AUDIO_CHANNELS,
     AUDIO_SAMPLE_RATE,
-    AUTH_ERROR_CODE,
+    AUTH_ERROR_CODES,
     AUTH_ERROR_KEYWORDS,
     WSS_BASE_URL,
     get_config_dir,
@@ -27,8 +27,8 @@ def test_audio_params():
     assert AUDIO_BLOCKSIZE == 4096
 
 
-def test_auth_error_code():
-    assert AUTH_ERROR_CODE == 709599054
+def test_auth_error_codes():
+    assert AUTH_ERROR_CODES == {709599054, 710012001, 710022013}
     assert "cookie" in AUTH_ERROR_KEYWORDS
     assert "auth" in AUTH_ERROR_KEYWORDS
     assert "session" in AUTH_ERROR_KEYWORDS
