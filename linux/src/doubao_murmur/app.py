@@ -217,12 +217,14 @@ class DoubaoMurmurApp(Gtk.Application):
         PasteHelper.copy_and_paste(text)
 
     def _show_overlay(self) -> None:
+        PasteHelper.remember_focused_window()
         if self.overlay:
             self.overlay.show()
 
     def _hide_overlay(self) -> None:
         if self.overlay:
             self.overlay.hide()
+        PasteHelper.forget_focused_window()
 
     def _update_overlay(self, text: str) -> None:
         if self.overlay:
