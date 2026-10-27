@@ -25,6 +25,15 @@
   <url type="homepage">https://github.com/lilong7676/doubao-murmur</url>
   <developer_name>lilong7676</developer_name>
   <releases>
+    <release version="1.5.2-beta.3" date="2026-10-27" type="development">
+      <description>
+        <p>Asks you to log in again when the saved Doubao login has expired.
+           The server drops such a connection without an error message, so
+           recording used to end with an empty transcription and no prompt.
+           A login the server rejects outright now gets the same prompt
+           instead of a generic connection error.</p>
+      </description>
+    </release>
     <release version="1.5.2-beta.2" date="2026-10-27" type="development">
       <description>
         <p>Fixes auto-paste into terminals on Hyprland, which printed a literal
