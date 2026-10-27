@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "doubao-murmur"
-version = "1.5.2-beta.2"
+version = "1.5.2-beta.3"
 description = "Voice-to-text input using Doubao ASR for SteamOS/Linux"
 readme = "README.md"
 license = "MIT"
