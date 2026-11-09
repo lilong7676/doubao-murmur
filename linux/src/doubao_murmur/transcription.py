@@ -225,8 +225,36 @@ class TranscriptionManager:
         text = self.app_state.transcription_text.strip()
         logger.info("Completing transcription: '%s'", text[:50])
         if text and self.on_paste:
+            # Unmap the status overlay *before* injecting the paste chord.
+            #
+            # On GNOME Wayland (stock mutter, no layer-shell) a mapped overlay
+            # toplevel becomes the keyboard-focus holder as soon as it appears.
+            # GDK's set_focusable(False) only affects GTK's internal focus
+            # chain, so it does not stop mutter from handing the surface the
+            # keyboard.  Wayland then gives an application no way to give focus
+            # back to another window, so the injected Ctrl+V lands on our own
+            # overlay and the transcript never reaches the user's field -- it
+            # stays in the clipboard and the user has to paste manually.
+            #
+            # set_visible(False) only *requests* an unmap; GTK applies it when
+            # control returns to the main loop, and mutter releases the focus a
+            # moment later.  Sleeping here would block that loop and leave the
+            # overlay mapped, so defer the paste by a short timeout instead.
+            if self.on_overlay_hide:
+                self.on_overlay_hide()
+                GLib.timeout_add(
+                    120, self._paste_after_overlay_hidden, text
+                )
+                self._reset_to_idle()
+                return
             self.on_paste(text)
         self._reset_to_idle()
+
+    def _paste_after_overlay_hidden(self, text: str) -> bool:
+        """Inject the paste chord once the overlay unmap has been applied."""
+        if self.on_paste:
+            self.on_paste(text)
+        return GLib.SOURCE_REMOVE
 
     def _reset_to_idle(self) -> bool:
         self.awaiting_final_result = False
