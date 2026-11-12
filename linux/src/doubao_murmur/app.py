@@ -12,6 +12,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
+from doubao_murmur import settings
 from doubao_murmur.app_state import AppState, LoginStatus
 from doubao_murmur.config import OVERLAY_UNMAP_DELAY
 from doubao_murmur.hotkey.evdev_listener import EvdevListener
@@ -45,6 +46,7 @@ class DoubaoMurmurApp(Gtk.Application):
         self.hotkey_manager: HotkeyManager | None = None
         self.transcription_manager: TranscriptionManager | None = None
         self.keyboard: KeyboardWindow | None = None
+        self.settings = settings.load()
         self._setup_done = False
 
     def do_activate(self):
@@ -90,6 +92,9 @@ class DoubaoMurmurApp(Gtk.Application):
         self.hotkey_manager.on_toggle = self.transcription_manager.handle_toggle
         self.hotkey_manager.on_cancel = self.transcription_manager.handle_cancel
         self.hotkey_manager.on_keyboard = self._toggle_keyboard
+        self.hotkey_manager.keyboard_hotkey_enabled = self.settings[
+            "keyboard_hotkey_enabled"
+        ]
 
         # Prefer the X11 listener: it sees both physical keys and
         # XTEST-injected ones (Steam Input desktop layouts inject
@@ -122,6 +127,10 @@ class DoubaoMurmurApp(Gtk.Application):
             on_quit_clicked=self._quit,
             on_help_clicked=self._show_help,
             on_keyboard_clicked=self._toggle_keyboard,
+            keyboard_hotkey_enabled=lambda: self.settings[
+                "keyboard_hotkey_enabled"
+            ],
+            on_keyboard_hotkey_toggled=self._set_keyboard_hotkey_enabled,
         )
         self.tray_icon.start()
 
@@ -161,6 +170,13 @@ class DoubaoMurmurApp(Gtk.Application):
             dialog.present()
             return
         self.keyboard.toggle()
+
+    def _set_keyboard_hotkey_enabled(self, enabled: bool) -> None:
+        logger.info("Keyboard hotkey %s", "enabled" if enabled else "disabled")
+        self.settings["keyboard_hotkey_enabled"] = enabled
+        settings.save(self.settings)
+        if self.hotkey_manager:
+            self.hotkey_manager.keyboard_hotkey_enabled = enabled
 
     def _show_login(self) -> None:
         if not LoginWindow.is_available():
@@ -322,7 +338,8 @@ class DoubaoMurmurApp(Gtk.Application):
             "快捷键：\n"
             "  右 Alt 键：切换录音\n"
             "  ESC 键：取消录音\n"
-            "  Ctrl + Super + Shift：显示 / 隐藏软键盘",
+            "  Ctrl + Super + Shift：显示 / 隐藏软键盘\n"
+            "  （与桌面快捷键冲突时，可在托盘菜单或控制面板中关闭）",
         )
         dialog.connect("response", lambda d, _: d.destroy())
         dialog.present()

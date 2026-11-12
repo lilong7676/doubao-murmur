@@ -132,7 +132,8 @@ class SniTray:
     """A StatusNotifierItem tray icon with a dbusmenu context menu.
 
     Menu items are plain dicts: ``{"label": str, "callback": callable|None,
-    "enabled": bool}``; ``None`` entries render as separators.
+    "enabled": bool, "checked": bool}``; ``None`` entries render as
+    separators. Items with a ``checked`` key render as checkboxes.
     """
 
     def __init__(
@@ -301,12 +302,16 @@ class SniTray:
         item = self._items.get(item_id)
         if item is None:  # separator
             return {"type": GLib.Variant("s", "separator")}
-        return {
+        props = {
             "type": GLib.Variant("s", "standard"),
             "label": GLib.Variant("s", item.get("label", "")),
             "enabled": GLib.Variant("b", item.get("enabled", True)),
             "visible": GLib.Variant("b", True),
         }
+        if "checked" in item:
+            props["toggle-type"] = GLib.Variant("s", "checkmark")
+            props["toggle-state"] = GLib.Variant("i", 1 if item["checked"] else 0)
+        return props
 
     def _layout_root(self):
         children = [

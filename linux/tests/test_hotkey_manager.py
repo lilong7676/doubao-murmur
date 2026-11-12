@@ -143,3 +143,36 @@ class TestAppEvdevFactory:
             on_escape=manager.trigger_cancel,
         )
         assert listener is listener_cls.return_value
+
+
+class TestKeyboardHotkeySwitch:
+    @staticmethod
+    def _manager(monkeypatch):
+        # trigger_keyboard() hands off through GLib.idle_add; run it inline.
+        monkeypatch.setattr(
+            "doubao_murmur.hotkey.manager.GLib.idle_add",
+            lambda fn, *args: fn(*args),
+        )
+        manager = HotkeyManager()
+        manager.calls = []
+        manager.on_keyboard = lambda: manager.calls.append("keyboard")
+        return manager
+
+    def test_keyboard_hotkey_fires_by_default(self, monkeypatch):
+        manager = self._manager(monkeypatch)
+        manager.trigger_keyboard()
+        assert manager.calls == ["keyboard"]
+
+    def test_disabled_keyboard_hotkey_is_ignored(self, monkeypatch):
+        manager = self._manager(monkeypatch)
+        manager.keyboard_hotkey_enabled = False
+        manager.trigger_keyboard()
+        assert manager.calls == []
+
+    def test_reenabling_takes_effect_immediately(self, monkeypatch):
+        manager = self._manager(monkeypatch)
+        manager.keyboard_hotkey_enabled = False
+        manager.trigger_keyboard()
+        manager.keyboard_hotkey_enabled = True
+        manager.trigger_keyboard()
+        assert manager.calls == ["keyboard"]
