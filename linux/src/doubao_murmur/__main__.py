@@ -11,6 +11,12 @@ def main():
         datefmt="%H:%M:%S",
     )
 
+    # Must run before GTK/WebKit are imported: both read the renderer
+    # choice from the environment at startup.
+    from doubao_murmur import gpu_quirks
+
+    gpu_quirks.apply()
+
     from doubao_murmur.app import DoubaoMurmurApp
 
     app = DoubaoMurmurApp()

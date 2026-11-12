@@ -178,6 +178,7 @@ linux/
 │   ├── app.py               # 主 GtkApplication
 │   ├── app_state.py         # 应用状态管理
 │   ├── config.py            # 配置常量
+│   ├── gpu_quirks.py        # NVIDIA 渲染兼容处理
 │   ├── asr_client.py        # WebSocket ASR 客户端
 │   ├── audio_capture.py     # 麦克风音频采集
 │   ├── transcription.py     # 录音状态机
@@ -241,6 +242,14 @@ rm ~/.config/doubao-murmur/asr_params.json
 ### WebView 无法加载
 - 安装 WebKitGTK: `sudo pacman -S webkitgtk-6.0`
 - 确认网络连接正常
+
+### NVIDIA 显卡：窗口闪烁 / 登录页白屏
+- 检测到 NVIDIA 闭源驱动时，应用会自动设置 `GSK_RENDERER=cairo`（消除 GTK 窗口闪烁）
+  和 `WEBKIT_DISABLE_DMABUF_RENDERER=1`（修复登录页白屏）
+- 自己设置过这两个环境变量时以你的设置为准，例如想换回 GPU 渲染：
+  `flatpak run --env=GSK_RENDERER=ngl com.doubao.Murmur`
+- 登录页提示 DNS 解析失败时，检查系统代理设置（GNOME：设置 → 网络 → 网络代理），
+  代理主机一栏只填主机名，不要带 `http://` 前缀
 
 ## 📝 开发
 
