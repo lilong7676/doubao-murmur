@@ -71,7 +71,6 @@ def apply_overlay_window_hints(window: Gtk.Window, role: OverlayRole) -> None:
         _apply_layer_shell(window, role)
         return
 
-    _apply_legacy_hints(window)
     logger.info(
         "gtk4-layer-shell not available; %s window will use GTK defaults",
         role.value,
@@ -122,36 +121,6 @@ def _position_overlay_center_bottom(window: Gtk.Window) -> None:
             left_margin = geo.x + (geo.width - OVERLAY_WIDTH) // 2
             LayerShell.set_margin(window, LayerShell.Edge.TOP, top_margin)
             LayerShell.set_margin(window, LayerShell.Edge.LEFT, left_margin)
-
-
-def _apply_legacy_hints(window: Gtk.Window) -> None:
-    """Best-effort hints for a plain (non layer-shell) overlay toplevel.
-
-    Every hint that used to live here -- ``set_keep_above``,
-    ``set_skip_taskbar_hint``, ``set_skip_pager_hint``, ``set_accept_focus``
-    and ``set_focus_on_map`` -- was removed in GTK4, so the old
-    ``getattr``-guarded loop silently did nothing at all.  GTK4 replaced them
-    with widget properties:
-
-    * ``focusable`` / ``can-focus`` -- whether the toplevel takes keyboard
-      focus.  This is the one that matters: if the overlay can take focus, the
-      paste keystroke is delivered to us instead of the user's field.
-    * ``focus-on-click`` -- do not grab focus when the overlay is clicked.
-
-    Window type hints (keep-above, skip-taskbar) have no GTK4 equivalent on
-    Wayland; stacking is the compositor's job, and on X11 the caller pins the
-    window via ``_x11_pin_above`` instead.
-    """
-    for method_name, value in (
-        ("set_focusable", False),
-        ("set_can_focus", False),
-        ("set_focus_on_click", False),
-        ("set_modal", False),
-        ("set_deletable", False),
-    ):
-        method = getattr(window, method_name, None)
-        if method is not None:
-            method(value)
 
 
 def present_overlay(window: Gtk.Window, role: OverlayRole,
