@@ -71,7 +71,6 @@ def apply_overlay_window_hints(window: Gtk.Window, role: OverlayRole) -> None:
         _apply_layer_shell(window, role)
         return
 
-    _apply_legacy_hints(window)
     logger.info(
         "gtk4-layer-shell not available; %s window will use GTK defaults",
         role.value,
@@ -122,17 +121,6 @@ def _position_overlay_center_bottom(window: Gtk.Window) -> None:
             left_margin = geo.x + (geo.width - OVERLAY_WIDTH) // 2
             LayerShell.set_margin(window, LayerShell.Edge.TOP, top_margin)
             LayerShell.set_margin(window, LayerShell.Edge.LEFT, left_margin)
-
-
-def _apply_legacy_hints(window: Gtk.Window) -> None:
-    for method_name, value in (
-        ("set_keep_above", True),
-        ("set_skip_taskbar_hint", True),
-        ("set_skip_pager_hint", True),
-    ):
-        method = getattr(window, method_name, None)
-        if method is not None:
-            method(value)
 
 
 def present_overlay(window: Gtk.Window, role: OverlayRole,
