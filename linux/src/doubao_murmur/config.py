@@ -98,6 +98,10 @@ PASTE_DELAY = 0.05  # seconds between copy and paste simulation
 # (notably Electron) to route input focus to the editor widget before the
 # synthetic paste chord is injected.
 PASTE_FOCUS_DELAY = 0.1  # seconds
+# Without layer-shell (GNOME's mutter) the status overlay holds the keyboard
+# focus while mapped, so it is hidden first and the paste waits this long for
+# the unmap to be applied and the focus to return to the user's window.
+OVERLAY_UNMAP_DELAY = 0.12  # seconds
 # Inter-key delay for the xdotool paste chord. Electron/Chromium can drop a
 # chord whose Ctrl and V arrive in the same instant; a short pause lets it
 # register the modifier before the letter.

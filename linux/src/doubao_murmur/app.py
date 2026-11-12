@@ -13,16 +13,19 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk
 
 from doubao_murmur.app_state import AppState, LoginStatus
+from doubao_murmur.config import OVERLAY_UNMAP_DELAY
 from doubao_murmur.hotkey.evdev_listener import EvdevListener
 from doubao_murmur.hotkey.manager import HotkeyManager
 from doubao_murmur.hotkey.x11_listener import X11KeyListener
 from doubao_murmur.keyboard.keyboard_window import KeyboardWindow
 from doubao_murmur.params_store import ParamsStore
 from doubao_murmur.paste.paste_helper import PasteHelper
+from doubao_murmur.session import is_pure_x11_session
 from doubao_murmur.transcription import TranscriptionManager
 from doubao_murmur.ui.login_window import LoginWindow
 from doubao_murmur.ui.overlay import Overlay
 from doubao_murmur.ui.tray_icon import TrayIcon
+from doubao_murmur.ui.windowing import using_layer_shell
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +227,31 @@ class DoubaoMurmurApp(Gtk.Application):
 
     def _do_paste(self, text: str) -> None:
         """Copy and paste transcription."""
+        if (
+            self.overlay
+            and not using_layer_shell()
+            and not is_pure_x11_session()
+        ):
+            # GNOME's mutter has no layer-shell, so the overlay is a plain
+            # toplevel and mutter hands it the keyboard focus once it maps;
+            # set_focusable(False) does not stop that, and Wayland gives no
+            # way to hand focus back to another app. The injected Ctrl+V
+            # would land on the overlay, so unmap it first. hide() only
+            # requests the unmap, which GTK applies once control returns to
+            # the main loop, hence a timeout rather than a sleep here.
+            self.overlay.hide()
+            GLib.timeout_add(
+                int(OVERLAY_UNMAP_DELAY * 1000),
+                self._paste_after_overlay_hidden,
+                text,
+            )
+            return
         PasteHelper.copy_and_paste(text)
+
+    @staticmethod
+    def _paste_after_overlay_hidden(text: str) -> bool:
+        PasteHelper.copy_and_paste(text)
+        return GLib.SOURCE_REMOVE
 
     def _show_overlay(self) -> None:
         PasteHelper.remember_focused_window()
