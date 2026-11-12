@@ -91,25 +91,21 @@ class DoubaoMurmurApp(Gtk.Application):
         # Prefer the X11 listener: it sees both physical keys and
         # XTEST-injected ones (Steam Input desktop layouts inject
         # controller-mapped keys via XTEST, invisible to evdev).
-        # evdev runs as a fallback in case X11 listener fails to start.
+        # HotkeyManager starts evdev on Wayland and when XRecord fails to
+        # start; on a pure X11 session with XRecord active it is skipped,
+        # so the same keys are not read twice from /dev/input.
         x11 = None
-        evdev = None
         if X11KeyListener.is_available():
             x11 = X11KeyListener(
                 on_toggle=self.hotkey_manager.trigger_toggle,
                 on_escape=self.hotkey_manager.trigger_cancel,
                 on_keyboard=self.hotkey_manager.trigger_keyboard,
             )
-        if EvdevListener.is_available():
-            evdev = EvdevListener(
-                on_toggle=self.hotkey_manager.trigger_toggle,
-                on_escape=self.hotkey_manager.trigger_cancel,
-            )
 
         self.hotkey_manager.start(
             overlay_button=None,
-            evdev_listener=evdev,
             x11_listener=x11,
+            evdev_factory=self._create_evdev_listener,
         )
 
         # 5. Create on-screen keyboard (lazily shown via tray)
@@ -127,6 +123,20 @@ class DoubaoMurmurApp(Gtk.Application):
         self.tray_icon.start()
 
         logger.info("All components initialized")
+
+    def _create_evdev_listener(self) -> EvdevListener | None:
+        """Build the evdev listener lazily.
+
+        HotkeyManager calls this only when XRecord failed to start or the
+        session is not pure X11, so a working X11 session never probes
+        /dev/input.
+        """
+        if not EvdevListener.is_available():
+            return None
+        return EvdevListener(
+            on_toggle=self.hotkey_manager.trigger_toggle,
+            on_escape=self.hotkey_manager.trigger_cancel,
+        )
 
     def _toggle_keyboard(self) -> None:
         if not self.keyboard:
