@@ -25,6 +25,19 @@
   <url type="homepage">https://github.com/lilong7676/doubao-murmur</url>
   <developer_name>lilong7676</developer_name>
   <releases>
+    <release version="1.5.2-beta.4" date="2026-11-12" type="development">
+      <description>
+        <p>Auto-paste now works on GNOME Wayland: the status overlay is hidden
+           before pasting, so the paste no longer lands on the overlay itself.</p>
+        <p>On NVIDIA's proprietary driver, windows no longer flicker and the
+           login page is no longer blank.</p>
+        <p>The Ctrl+Super+Shift on-screen keyboard shortcut can be turned off
+           from the tray menu when it clashes with a desktop shortcut.</p>
+        <p>The hotkey listener no longer keeps a CPU core busy: on X11 it stops
+           reading /dev/input, and elsewhere it watches keyboards only instead of
+           every input device.</p>
+      </description>
+    </release>
     <release version="1.5.2-beta.3" date="2026-10-27" type="development">
       <description>
         <p>Asks you to log in again when the saved Doubao login has expired.
